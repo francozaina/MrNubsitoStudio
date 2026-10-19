@@ -1,0 +1,8 @@
+# Build and temporary files
+temp_build/
+output_shorts/
+__pycache__/
+*.pyc
+
+# Input testing files (optional/local)
+video_input.mp4

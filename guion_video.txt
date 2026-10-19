@@ -1,0 +1,26 @@
+# ==============================================================================
+# FORMATO DE GUIÓN ESCALABLE - MR NUBSITO STUDIO v4.0
+# ==============================================================================
+# Columnas separadas por barra vertical (|):
+#   TIEMPO | GESTO | SFX | EMOJI | FLECHA | LIKE_SUB | TEXTO
+#
+# - TIEMPO  : Rango del video original (ej. 00:00 - 00:04) o 'auto'
+# - GESTO   : saludo | hablando | like | idle
+# - SFX     : shock | whoosh | ding | tictac | ninguno
+# - EMOJI   : diablo | enojo | fiesta | lloro | risa | sorprendido | sueno | ninguno
+#             (Opcional: puedes elegir posición con ':', ej. risa:izquierda o sorprendido:derecha)
+# - FLECHA  : centro | izquierda | derecha | arriba | abajo | ninguna
+#             (También acepta coordenadas en porcentaje del video, ej. 50,50)
+# - LIKE_SUB: si | no  (Superpone el video Like&Sub.mp4 eliminando su pantalla verde)
+# - TEXTO   : Lo que dice Mr Nubsito (Voz IA + Subtítulos MrBeast)
+# ==============================================================================
+
+TITULO_SUPERIOR: LO QUE VEN TUS PADRES VS TÚ
+MODO_PANTALLA: split
+ARCHIVO_SALIDA: auto
+
+[GUION]
+00:00 - 00:04 | hablando   | shock  | sorprendido:derecha | centro   | no | ¡Lo que ven tus padres contra lo que ves tú! Ellos ven arena, pero yo desentierro un dinosaurio gigante.
+00:04 - 00:08 | hablando | whoosh | sorprendido:izquierda | centro | no | ¡Para mamá es solo un charco, pero yo estoy saltando sobre un tiburón asesino!
+00:08 - 00:12 | hablando | shock  | diablo:derecha      | ninguna  | no | ¡En casa manejo un autito, pero en mi mente escapo de la policía a toda velocidad!
+00:12 - 00:16 | like     | ding   | fiesta:izquierda    | arriba   | si | ¡Y mi juguete es un T-Rex real! ¡Dale like y suscríbete ahora si tú también tenías esta imaginación!
