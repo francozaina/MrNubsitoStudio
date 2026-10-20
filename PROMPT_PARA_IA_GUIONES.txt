@@ -8,6 +8,9 @@ que uses para redactar tus guiones:
 Actúa como guionista y director de edición de Shorts/TikToks para el canal de gaming y reacciones "Mr Nubsito".
 Cada vez que te pida un guión o te describa un video, debes entregármelo EXCLUSIVAMENTE en el siguiente formato de texto plano (Listo para copiar y pegar en `guion_video.txt`), sin explicaciones adicionales fuera del bloque.
 
+AHORA VAS A HACER UN GUION PARA ESTE VIDEO
+""
+
 REGLAS DE ASSETS DISPONIBLES QUE DEBES ELEGIR EN CADA LÍNEA:
 1. TIEMPO:
    - Si te doy marcas de tiempo del video original, usa `MM:SS - MM:SS` (ej. `00:00 - 00:04`).
@@ -66,5 +69,5 @@ ARCHIVO_SALIDA: auto
 TIEMPO | GESTO | SFX | EMOJI | FLECHA | LIKE_SUB | TEXTO
 auto | saludo | shock | sorprendido | centro | no | ¡Texto del gancho inicial!
 auto | hablando | whoosh | risa:izquierda | ninguna | no | Texto del desarrollo del video.
-auto | like | ding | fiesta | ninguna | si | ¡Texto final pidiendo like y suscripción!
+auto | like | ding | fiesta | ninguna | si | ¡Texto final pidiendo like y suscripción! Call to action agresiva, deci que a los 10 mil subs sortearas robux.
 --------------------------------------------------------------------------------

@@ -123,31 +123,15 @@ class PalabraSubtitulo:
 # ==============================================================================
 # 3. UTILIDADES DE NORMALIZACIÓN Y LECTOR UNIVERSAL DE GUIÓN (.TXT Y .JSON)
 # ==============================================================================
-PLANTILLA_GUION_GENERICA = """# ==============================================================================
-# FORMATO DE GUIÓN ESCALABLE - MR NUBSITO STUDIO v4.0
-# ==============================================================================
-# Columnas separadas por barra vertical (|):
-#   TIEMPO | GESTO | SFX | EMOJI | FLECHA | LIKE_SUB | TEXTO
-#
-# - TIEMPO  : Rango del video original (ej. 00:00 - 00:04) o 'auto'
-# - GESTO   : saludo | hablando | like | idle
-# - SFX     : shock | whoosh | ding | tictac | ninguno
-# - EMOJI   : diablo | enojo | fiesta | lloro | risa | sorprendido | sueno | ninguno
-#             (Opcional: puedes indicar lado con ':', ej. risa:izquierda o sorprendido:derecha)
-# - FLECHA  : centro | izquierda | derecha | arriba | abajo | ninguna
-#             (También acepta coordenadas en porcentaje del video, ej. 50,50)
-# - LIKE_SUB: si | no  (Activa la animación de Like y Suscribirse con pantalla verde)
-# - TEXTO   : Lo que dirá Mr Nubsito con voz IA y subtítulos MrBeast
-# ==============================================================================
-
-TITULO_SUPERIOR: 
+PLANTILLA_GUION_GENERICA = """TITULO_SUPERIOR: [Título corto y llamativo de máximo 4-5 palabras, o déjalo vacío]
 MODO_PANTALLA: split
 ARCHIVO_SALIDA: auto
 
 [GUION]
-auto | saludo   | shock  | sorprendido | centro  | no | ¡Miren lo que está pasando en este video! ¡No tiene ningún sentido!
-auto | hablando | whoosh | risa        | ninguna | no | Al principio parecía algo normal, pero cada segundo se pone más increíble.
-auto | like     | ding   | fiesta      | ninguna | si | ¡Deja tu like y suscríbete ahora mismo si quieres ver la segunda parte!
+TIEMPO | GESTO | SFX | EMOJI | FLECHA | LIKE_SUB | TEXTO
+auto | saludo | shock | sorprendido | centro | no | ¡Texto del gancho inicial!
+auto | hablando | whoosh | risa:izquierda | ninguna | no | Texto del desarrollo del video.
+auto | like | ding | fiesta | ninguna | si | ¡Texto final pidiendo like y suscripción! Call to action agresiva, deci que a los 10 mil subs sortearas robux.
 """
 
 
@@ -419,6 +403,12 @@ def cargar_guion_video(ruta_guion: Path) -> ConfigGuion:
             continue
 
         partes = [p.strip() for p in limpia.split("|")]
+        if (
+            len(partes) >= 2
+            and _quitar_acentos(partes[0].upper()) in ("TIEMPO", "TIEMPOS", "TIME")
+            and _quitar_acentos(partes[1].upper()) in ("GESTO", "GESTOS")
+        ):
+            continue
         t_ini, t_fin = None, None
         gesto = "hablando"
         sfx: Optional[str] = None
@@ -1519,9 +1509,9 @@ class GestorAssetsVisuales:
 
 class LectorVideoReferencia:
     """
-    Carga el video de entrada y permite obtener el fotograma exacto en cualquier
-    segundo `t_video`, redimensionado automáticamente a (1080x1300) para modo Split
-    o (1080x1920) para modo Full.
+    Carga el video de entrada interpolado a 60 FPS reales (con detección de cortes de escena)
+    y permite obtener el fotograma exacto con interpolación sub-frame en cualquier
+    segundo `t_video`, redimensionado a (1080x1300) para modo Split o (1080x1920) para Full.
     """
 
     def __init__(self, ruta_video: Path, target_w: int, target_h: int):
@@ -1530,40 +1520,84 @@ class LectorVideoReferencia:
         self.ruta_video = ruta_video
         self.target_w = target_w
         self.target_h = target_h
-
-        cap = cv2.VideoCapture(str(ruta_video))
-        self.fps_origen = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        self.fps_origen = float(FPS)
         self.frames: List[np.ndarray] = []
 
-        print(f"[*] Cargando y escalando fotogramas de: {ruta_video.name}...")
-        while True:
-            ret, frame_bgr = cap.read()
-            if not ret:
-                break
-            frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-            h, w, _ = frame_rgb.shape
-            scale = max(target_w / float(w), target_h / float(h))
-            nw, nh = int(round(w * scale)), int(round(h * scale))
-            resized = cv2.resize(
-                frame_rgb,
-                (nw, nh),
-                interpolation=cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR,
-            )
-            x0 = (nw - target_w) // 2
-            y0 = (nh - target_h) // 2
-            crop = resized[y0 : y0 + target_h, x0 : x0 + target_w]
-            self.frames.append(crop)
-        cap.release()
+        print(f"[*] Procesando y convirtiendo '{ruta_video.name}' a {FPS} FPS fluidos...")
+
+        filtro_vf = (
+            f"scale={target_w}:{target_h}:force_original_aspect_ratio=increase,"
+            f"crop={target_w}:{target_h},"
+            f"framerate=fps={FPS}:interp_start=0:interp_end=255:scene=8.2"
+        )
+        cmd_ff = [
+            "ffmpeg",
+            "-v", "error",
+            "-i", str(ruta_video),
+            "-vf", filtro_vf,
+            "-pix_fmt", "rgb24",
+            "-f", "rawvideo",
+            "-",
+        ]
+        try:
+            proc = subprocess.Popen(cmd_ff, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            bytes_por_frame = target_w * target_h * 3
+            if proc.stdout:
+                while True:
+                    buf = proc.stdout.read(bytes_por_frame)
+                    if len(buf) < bytes_por_frame:
+                        break
+                    frame_np = np.frombuffer(buf, dtype=np.uint8).reshape((target_h, target_w, 3)).copy()
+                    self.frames.append(frame_np)
+            proc.wait()
+        except Exception:
+            self.frames.clear()
+
+        # Fallback a OpenCV si FFmpeg no pudo decodificar el archivo
+        if not self.frames:
+            cap = cv2.VideoCapture(str(ruta_video))
+            self.fps_origen = cap.get(cv2.CAP_PROP_FPS) or 30.0
+            while True:
+                ret, frame_bgr = cap.read()
+                if not ret:
+                    break
+                frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+                h, w, _ = frame_rgb.shape
+                scale = max(target_w / float(w), target_h / float(h))
+                nw, nh = int(round(w * scale)), int(round(h * scale))
+                resized = cv2.resize(
+                    frame_rgb,
+                    (nw, nh),
+                    interpolation=cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR,
+                )
+                x0 = (nw - target_w) // 2
+                y0 = (nh - target_h) // 2
+                crop = resized[y0 : y0 + target_h, x0 : x0 + target_w]
+                self.frames.append(crop)
+            cap.release()
 
         if not self.frames:
-            raise RuntimeError(f"El archivo de video {ruta_video} no pudo leerse con OpenCV.")
+            raise RuntimeError(f"El archivo de video {ruta_video} no pudo leerse.")
         self.duracion_total = len(self.frames) / float(self.fps_origen)
-        print(f"[*] Video cargado: {len(self.frames)} frames ({self.duracion_total:.2f}s a {self.fps_origen:.1f} FPS)")
+        print(f"[*] Video listo a {self.fps_origen:.0f} FPS: {len(self.frames)} frames ({self.duracion_total:.2f}s)")
 
     def obtener_frame_en_segundo(self, t_seg: float) -> Image.Image:
-        idx = int(round(t_seg * self.fps_origen))
-        idx = max(0, min(len(self.frames) - 1, idx))
-        return Image.fromarray(self.frames[idx], mode="RGB")
+        pos = max(0.0, min(float(len(self.frames) - 1), t_seg * self.fps_origen))
+        i0 = int(pos)
+        frac = pos - i0
+
+        if frac < 0.02 or i0 >= len(self.frames) - 1:
+            return Image.fromarray(self.frames[i0], mode="RGB")
+
+        f0 = self.frames[i0]
+        f1 = self.frames[i0 + 1]
+        # Si hay un cambio brusco de escena entre f0 y f1, no mezclar para evitar fantasma en el corte
+        diff_escena = float(np.mean(np.abs(f0[::8, ::8].astype(np.int16) - f1[::8, ::8].astype(np.int16))))
+        if diff_escena > 28.0:
+            return Image.fromarray(f0 if frac < 0.5 else f1, mode="RGB")
+
+        mezcla = cv2.addWeighted(f0, 1.0 - frac, f1, frac, 0.0)
+        return Image.fromarray(mezcla, mode="RGB")
 
 
 # ==============================================================================
@@ -1899,26 +1933,432 @@ async def editar_video_con_guion(ruta_video: Path, ruta_guion: Path) -> Path:
     return ruta_mp4_final
 
 
-if __name__ == "__main__":
-    video_arg = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else DEFAULT_VIDEO_INPUT
-    if len(sys.argv) > 2:
-        guion_arg = Path(sys.argv[2]).resolve()
-    elif DEFAULT_GUION_JSON.exists() and not DEFAULT_GUION_TXT.exists():
-        guion_arg = DEFAULT_GUION_JSON
+# ==============================================================================
+# 8. DESCARGA CON YT-DLP E INTERFAZ GRÁFICA (APLICACIÓN DE ESCRITORIO)
+# ==============================================================================
+def descargar_video_youtube(url: str) -> Path:
+    """
+    Descarga el video de YouTube usando exactamente el comando:
+      yt-dlp -S res,ext:mp4:m4a -o "video_input.%(ext)s" "URL_DEL_VIDEO"
+    """
+    import shutil
+
+    url_limpia = url.strip()
+    if not url_limpia:
+        raise ValueError("La URL del video está vacía.")
+
+    # Eliminar video_input anterior para asegurar que descargue el video nuevo
+    for existente in BASE_DIR.glob("video_input.*"):
+        try:
+            existente.unlink()
+        except OSError:
+            pass
+
+    ejecutable_ytdlp = shutil.which("yt-dlp")
+    if ejecutable_ytdlp:
+        cmd_base = [ejecutable_ytdlp]
     else:
-        guion_arg = DEFAULT_GUION_TXT
+        cmd_base = [sys.executable, "-m", "yt_dlp"]
 
-    if not guion_arg.exists():
-        DEFAULT_GUION_TXT.write_text(PLANTILLA_GUION_GENERICA.strip() + "\n", encoding="utf-8")
-        print(f"[*] Plantilla de guion creada en: {DEFAULT_GUION_TXT}")
+    cmd = [
+        *cmd_base,
+        "-S", "res,ext:mp4:m4a",
+        "-o", "video_input.%(ext)s",
+        url_limpia,
+    ]
 
-    if not video_arg.exists():
-        print("=" * 74)
-        print(f"[!] FALTA EL VIDEO DE ENTRADA: {video_arg.name}")
-        print("    1. Guarda cualquier video en esta carpeta con el nombre 'video_input.mp4'")
-        print("       (o pásalo por consola: python \"Mr Nubsito Studio.py\" mi_video.mp4 guion_video.txt)")
-        print(f"    2. Escribe o pega el guión en '{guion_arg.name}' y vuelve a ejecutar.")
-        print("=" * 74)
-        sys.exit(0)
+    print("=" * 74)
+    print(f"[*] Descargando video con yt-dlp: {url_limpia}")
+    print(f"    Comando: yt-dlp -S res,ext:mp4:m4a -o \"video_input.%(ext)s\" \"{url_limpia}\"")
+    print("=" * 74)
 
-    asyncio.run(editar_video_con_guion(video_arg, guion_arg))
+    proc = subprocess.Popen(
+        cmd,
+        cwd=str(BASE_DIR),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if proc.stdout:
+        for linea in proc.stdout:
+            linea_s = linea.rstrip()
+            if linea_s:
+                print(f"[yt-dlp] {linea_s}")
+    proc.wait()
+
+    if proc.returncode != 0:
+        raise RuntimeError(f"yt-dlp terminó con código de error {proc.returncode}. Verifica el link de YouTube.")
+
+    if DEFAULT_VIDEO_INPUT.exists():
+        return DEFAULT_VIDEO_INPUT
+
+    descargados = sorted(BASE_DIR.glob("video_input.*"))
+    if descargados:
+        return descargados[0]
+
+    raise FileNotFoundError("No se encontró el archivo 'video_input.mp4' tras la descarga.")
+
+
+def iniciar_aplicacion_gui() -> None:
+    import queue
+    import threading
+    import tkinter as tk
+    from tkinter import messagebox, scrolledtext
+
+    root = tk.Tk()
+    root.title("Mr Nubsito Studio v4.0 - Editor Automático de Shorts")
+    root.geometry("920x760")
+    root.minsize(780, 640)
+    root.configure(bg="#14161f")
+
+    cola_logs: "queue.Queue[str]" = queue.Queue()
+    editando_lock = threading.Lock()
+
+    # Estilos y colores
+    BG_MAIN = "#14161f"
+    BG_CARD = "#1e2230"
+    BG_INPUT = "#10121a"
+    FG_TEXT = "#f3f4f6"
+    FG_MUTED = "#9ca3af"
+    ACCENT_YELLOW = "#facc15"
+    ACCENT_GREEN = "#22c55e"
+    ACCENT_BLUE = "#3b82f6"
+
+    # Encabezado
+    header_frame = tk.Frame(root, bg=BG_MAIN, padx=20, pady=12)
+    header_frame.pack(fill=tk.X)
+
+    lbl_titulo = tk.Label(
+        header_frame,
+        text="MR NUBSITO STUDIO",
+        font=("Segoe UI", 18, "bold"),
+        fg=ACCENT_YELLOW,
+        bg=BG_MAIN,
+    )
+    lbl_titulo.pack(side=tk.LEFT)
+
+    lbl_sub = tk.Label(
+        header_frame,
+        text="Pegá el link del Short y el guión para generar el video automáticamente",
+        font=("Segoe UI", 10),
+        fg=FG_MUTED,
+        bg=BG_MAIN,
+        padx=12,
+    )
+    lbl_sub.pack(side=tk.LEFT, pady=(6, 0))
+
+    # 1. Campo de Link de YouTube
+    url_card = tk.Frame(root, bg=BG_CARD, padx=16, pady=12, highlightthickness=1, highlightbackground="#2e3446")
+    url_card.pack(fill=tk.X, padx=20, pady=(0, 10))
+
+    lbl_url = tk.Label(
+        url_card,
+        text="1. Link del Video de YouTube / Short:",
+        font=("Segoe UI", 11, "bold"),
+        fg=FG_TEXT,
+        bg=BG_CARD,
+    )
+    lbl_url.pack(anchor="w", pady=(0, 6))
+
+    url_row = tk.Frame(url_card, bg=BG_CARD)
+    url_row.pack(fill=tk.X)
+
+    entry_url = tk.Entry(
+        url_row,
+        font=("Consolas", 11),
+        bg=BG_INPUT,
+        fg="#ffffff",
+        insertbackground="#ffffff",
+        relief=tk.FLAT,
+        highlightthickness=1,
+        highlightbackground="#374151",
+        highlightcolor=ACCENT_YELLOW,
+    )
+    entry_url.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=7, padx=(0, 8))
+
+    def pegar_url() -> None:
+        try:
+            texto_clip = root.clipboard_get().strip()
+            entry_url.delete(0, tk.END)
+            entry_url.insert(0, texto_clip)
+        except Exception:
+            pass
+
+    btn_pegar_url = tk.Button(
+        url_row,
+        text="Pegar Link",
+        command=pegar_url,
+        font=("Segoe UI", 9, "bold"),
+        bg="#2d3348",
+        fg=FG_TEXT,
+        activebackground="#3e4663",
+        activeforeground="#ffffff",
+        relief=tk.FLAT,
+        padx=12,
+        pady=6,
+        cursor="hand2",
+    )
+    btn_pegar_url.pack(side=tk.RIGHT)
+
+    # 2. Campo de Guión
+    guion_card = tk.Frame(root, bg=BG_CARD, padx=16, pady=12, highlightthickness=1, highlightbackground="#2e3446")
+    guion_card.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 10))
+
+    guion_top_row = tk.Frame(guion_card, bg=BG_CARD)
+    guion_top_row.pack(fill=tk.X, pady=(0, 6))
+
+    lbl_guion = tk.Label(
+        guion_top_row,
+        text="2. Guión del Video:",
+        font=("Segoe UI", 11, "bold"),
+        fg=FG_TEXT,
+        bg=BG_CARD,
+    )
+    lbl_guion.pack(side=tk.LEFT)
+
+    txt_guion = scrolledtext.ScrolledText(
+        guion_card,
+        font=("Consolas", 10),
+        bg=BG_INPUT,
+        fg="#e5e7eb",
+        insertbackground="#ffffff",
+        relief=tk.FLAT,
+        height=13,
+        wrap=tk.WORD,
+        highlightthickness=1,
+        highlightbackground="#374151",
+        highlightcolor=ACCENT_YELLOW,
+        padx=10,
+        pady=10,
+    )
+    txt_guion.pack(fill=tk.BOTH, expand=True)
+
+    # Cargar el guion actual o la plantilla por defecto
+    if DEFAULT_GUION_TXT.exists():
+        try:
+            contenido_inicial = DEFAULT_GUION_TXT.read_text(encoding="utf-8-sig").strip()
+        except Exception:
+            contenido_inicial = PLANTILLA_GUION_GENERICA.strip()
+    else:
+        contenido_inicial = PLANTILLA_GUION_GENERICA.strip()
+    txt_guion.insert("1.0", contenido_inicial)
+
+    def restaurar_plantilla() -> None:
+        txt_guion.delete("1.0", tk.END)
+        txt_guion.insert("1.0", PLANTILLA_GUION_GENERICA.strip())
+
+    def pegar_guion() -> None:
+        try:
+            clip = root.clipboard_get().strip()
+            if clip:
+                txt_guion.delete("1.0", tk.END)
+                txt_guion.insert("1.0", clip)
+        except Exception:
+            pass
+
+    btn_plantilla = tk.Button(
+        guion_top_row,
+        text="Cargar Plantilla Ejemplo",
+        command=restaurar_plantilla,
+        font=("Segoe UI", 9),
+        bg="#2d3348",
+        fg=FG_TEXT,
+        activebackground="#3e4663",
+        activeforeground="#ffffff",
+        relief=tk.FLAT,
+        padx=10,
+        pady=3,
+        cursor="hand2",
+    )
+    btn_plantilla.pack(side=tk.RIGHT, padx=(6, 0))
+
+    btn_pegar_guion = tk.Button(
+        guion_top_row,
+        text="Reemplazar con Portapapeles",
+        command=pegar_guion,
+        font=("Segoe UI", 9, "bold"),
+        bg="#2d3348",
+        fg=FG_TEXT,
+        activebackground="#3e4663",
+        activeforeground="#ffffff",
+        relief=tk.FLAT,
+        padx=10,
+        pady=3,
+        cursor="hand2",
+    )
+    btn_pegar_guion.pack(side=tk.RIGHT)
+
+    # 3. Botón EDITAR y Barra de Acciones
+    acciones_frame = tk.Frame(root, bg=BG_MAIN, padx=20, pady=4)
+    acciones_frame.pack(fill=tk.X)
+
+    btn_editar = tk.Button(
+        acciones_frame,
+        text="🎬  EDITAR VIDEO",
+        font=("Segoe UI", 13, "bold"),
+        bg=ACCENT_GREEN,
+        fg="#052e16",
+        activebackground="#16a34a",
+        activeforeground="#ffffff",
+        relief=tk.FLAT,
+        padx=28,
+        pady=10,
+        cursor="hand2",
+    )
+    btn_editar.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
+
+    def abrir_carpeta_salida() -> None:
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            os.startfile(str(OUTPUT_DIR))
+        except Exception:
+            pass
+
+    btn_carpeta = tk.Button(
+        acciones_frame,
+        text="📂 Abrir Carpeta Output",
+        command=abrir_carpeta_salida,
+        font=("Segoe UI", 10, "bold"),
+        bg=ACCENT_BLUE,
+        fg="#ffffff",
+        activebackground="#2563eb",
+        activeforeground="#ffffff",
+        relief=tk.FLAT,
+        padx=16,
+        pady=10,
+        cursor="hand2",
+    )
+    btn_carpeta.pack(side=tk.RIGHT)
+
+    # 4. Consola de Progreso en Vivo
+    log_card = tk.Frame(root, bg=BG_CARD, padx=14, pady=8, highlightthickness=1, highlightbackground="#2e3446")
+    log_card.pack(fill=tk.X, padx=20, pady=(6, 16))
+
+    lbl_estado = tk.Label(
+        log_card,
+        text="Estado: Listo para editar",
+        font=("Segoe UI", 9, "bold"),
+        fg=ACCENT_YELLOW,
+        bg=BG_CARD,
+    )
+    lbl_estado.pack(anchor="w", pady=(0, 4))
+
+    txt_logs = scrolledtext.ScrolledText(
+        log_card,
+        font=("Consolas", 9),
+        bg="#0b0d13",
+        fg="#a7f3d0",
+        relief=tk.FLAT,
+        height=7,
+        state=tk.DISABLED,
+    )
+    txt_logs.pack(fill=tk.X)
+
+    class RedireccionadorStdout:
+        def __init__(self, q: "queue.Queue[str]"):
+            self.q = q
+
+        def write(self, texto: str) -> None:
+            if texto:
+                self.q.put(texto)
+
+        def flush(self) -> None:
+            pass
+
+    def actualizar_consola() -> None:
+        while not cola_logs.empty():
+            msg = cola_logs.get_nowait()
+            txt_logs.configure(state=tk.NORMAL)
+            txt_logs.insert(tk.END, msg)
+            txt_logs.see(tk.END)
+            txt_logs.configure(state=tk.DISABLED)
+        root.after(80, actualizar_consola)
+
+    def ejecutar_flujo_edicion() -> None:
+        if not editando_lock.acquire(blocking=False):
+            return
+
+        url_video = entry_url.get().strip()
+        texto_guion_actual = txt_guion.get("1.0", tk.END).strip()
+
+        if not texto_guion_actual:
+            messagebox.showwarning("Guión vacío", "Por favor pega un guión antes de presionar Editar.")
+            editando_lock.release()
+            return
+
+        btn_editar.configure(state=tk.DISABLED, text="⏳ PROCESANDO Y RENDERIZANDO...", bg="#4b5563", fg="#ffffff")
+        lbl_estado.configure(text="Estado: Trabajando... (No cierres la ventana)", fg=ACCENT_YELLOW)
+        txt_logs.configure(state=tk.NORMAL)
+        txt_logs.delete("1.0", tk.END)
+        txt_logs.configure(state=tk.DISABLED)
+
+        def tarea_background() -> None:
+            stdout_orig = sys.stdout
+            stderr_orig = sys.stderr
+            sys.stdout = RedireccionadorStdout(cola_logs)
+            sys.stderr = RedireccionadorStdout(cola_logs)
+            try:
+                # 1. Guardar el guión escrito/pegado en guion_video.txt
+                DEFAULT_GUION_TXT.write_text(texto_guion_actual + "\n", encoding="utf-8")
+                print(f"[*] Guión guardado en: {DEFAULT_GUION_TXT.name}")
+
+                # 2. Si el usuario ingresó un link de YouTube, descargarlo con yt-dlp
+                if url_video:
+                    ruta_video_usar = descargar_video_youtube(url_video)
+                else:
+                    if not DEFAULT_VIDEO_INPUT.exists():
+                        raise FileNotFoundError(
+                            "No ingresaste un link de YouTube y tampoco existe 'video_input.mp4' en la carpeta."
+                        )
+                    print(f"[*] Sin link nuevo: usando '{DEFAULT_VIDEO_INPUT.name}' existente en la carpeta.")
+                    ruta_video_usar = DEFAULT_VIDEO_INPUT
+
+                # 3. Ejecutar el motor de edición tal como funciona normalmente
+                ruta_final = asyncio.run(editar_video_con_guion(ruta_video_usar, DEFAULT_GUION_TXT))
+
+                def on_success() -> None:
+                    lbl_estado.configure(
+                        text=f"¡Listo! Video exportado en: output_shorts/{ruta_final.name}",
+                        fg=ACCENT_GREEN,
+                    )
+                    btn_editar.configure(state=tk.NORMAL, text="🎬  EDITAR VIDEO", bg=ACCENT_GREEN, fg="#052e16")
+                    messagebox.showinfo(
+                        "¡Video Terminado!",
+                        f"El video se generó con éxito en:\n\n{ruta_final}",
+                    )
+
+                root.after(0, on_success)
+
+            except Exception as exc:
+                print(f"\n[ERROR] {exc}\n")
+
+                def on_error(err_msg: str = str(exc)) -> None:
+                    lbl_estado.configure(text=f"Error: {err_msg}", fg="#ef4444")
+                    btn_editar.configure(state=tk.NORMAL, text="🎬  EDITAR VIDEO", bg=ACCENT_GREEN, fg="#052e16")
+                    messagebox.showerror("Error durante la edición", err_msg)
+
+                root.after(0, on_error)
+            finally:
+                sys.stdout = stdout_orig
+                sys.stderr = stderr_orig
+                editando_lock.release()
+
+        hilo = threading.Thread(target=tarea_background, daemon=True)
+        hilo.start()
+
+    btn_editar.configure(command=ejecutar_flujo_edicion)
+    root.after(80, actualizar_consola)
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    # Si se pasan argumentos por consola, corre en modo CLI directo;
+    # si se ejecuta sin argumentos (doble clic o `python "Mr Nubsito Studio.py"`), abre la aplicación gráfica.
+    if len(sys.argv) > 1:
+        video_arg = Path(sys.argv[1]).resolve()
+        guion_arg = Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else DEFAULT_GUION_TXT
+        asyncio.run(editar_video_con_guion(video_arg, guion_arg))
+    else:
+        iniciar_aplicacion_gui()
