@@ -76,6 +76,8 @@ EMOJIS_DIR = ASSETS_DIR / "emojis"
 FONTS_DIR = ASSETS_DIR / "fonts"
 SFX_DIR = ASSETS_DIR / "sfx"
 LIKE_SUB_PATH = ASSETS_DIR / "Like&Sub.mp4"
+TIMER_PATH = ASSETS_DIR / "timer.mp4"
+DURACION_TIMER_SEG = 3.5
 TEMP_DIR = BASE_DIR / "temp_build"
 OUTPUT_DIR = BASE_DIR / "output_shorts"
 
@@ -91,15 +93,17 @@ DEFAULT_GUION_JSON = BASE_DIR / "guion_video.json"
 class SegmentoVideoGuion:
     id_segmento: str
     texto_voz: str
-    gesto_personaje: str = "hablando"        # "idle", "saludo", "hablando", "like" (o cualquier .mp4 en assets/gestos)
+    gesto_personaje: str = "hablando"        # "idle", "saludo", "hablando", "hablando2", "like" (o cualquier .mp4 en assets/gestos)
     t_inicio_video: Optional[float] = None   # Segundos en el video original (None = automático proporcional)
     t_fin_video: Optional[float] = None      # Segundos en el video original (None = automático proporcional)
     pausa_idle_final_seg: float = 0.18
     sfx_inicio: Optional[str] = None         # "ding", "shock", "tictac", "whoosh", None
     emoji: Optional[str] = None              # "diablo", "enojo", "fiesta", "lloro", "risa", "sorprendido", "sueno", None
     posicion_emoji: str = "derecha"          # "derecha", "izquierda", "centro", "arriba_der", "arriba_izq"
-    flecha: Optional[str] = None             # "centro", "izquierda", "derecha", "arriba", "abajo", "x,y", None
+    flecha: Optional[str] = None             # "auto", "x,y", "x,y@mm:ss", zona ("izquierda"...), None. Máx 1 por video.
     mostrar_like_sub: bool = False           # True = superpone el video Like&Sub.mp4 sin fondo verde
+    mostrar_timer: bool = False              # True = al terminar la pregunta, muestra timer.mp4 (3.5s) con cuenta atrás
+    duracion_timer_seg: float = DURACION_TIMER_SEG
 
 
 @dataclass
@@ -123,15 +127,17 @@ class PalabraSubtitulo:
 # ==============================================================================
 # 3. UTILIDADES DE NORMALIZACIÓN Y LECTOR UNIVERSAL DE GUIÓN (.TXT Y .JSON)
 # ==============================================================================
-PLANTILLA_GUION_GENERICA = """TITULO_SUPERIOR: [Título corto y llamativo de máximo 4-5 palabras, o déjalo vacío]
+PLANTILLA_GUION_GENERICA = """TITULO_SUPERIOR: Celular Nuevo Vs Un Ano Despues
 MODO_PANTALLA: split
 ARCHIVO_SALIDA: auto
 
 [GUION]
-TIEMPO | GESTO | SFX | EMOJI | FLECHA | LIKE_SUB | TEXTO
-auto | saludo | shock | sorprendido | centro | no | ¡Texto del gancho inicial!
-auto | hablando | whoosh | risa:izquierda | ninguna | no | Texto del desarrollo del video.
-auto | like | ding | fiesta | ninguna | si | ¡Texto final pidiendo like y suscripción! Call to action agresiva, deci que a los 10 mil subs sortearas robux.
+TIEMPO | GESTO | SFX | EMOJI | FLECHA | LIKE_SUB | TIMER | TEXTO
+00:00 - 00:05 | hablando | crowd_shocked | fiesta:derecha | ninguna | no | no | ¡El primer día con celular nuevo lo besas y lo cuidas como si fuera de oro puro!
+00:05 - 00:09 | hablando2 | awww+good_idea | risa:izquierda | ninguna | no | no | ¡Lo limpias suave con un pañuelo y hasta lo acuestas a dormir cómodo en tu propia almohada!
+00:09 - 00:14 | hablando | punch+xp_Error | sorprendido:derecha | ninguna | no | no | ¡Pero cuando pasa un año entero lo tiras desde la puerta y rebota durísimo contra todo el piso!
+00:14 - 00:18 | hablando2 | whoosh+cartoon_laugh | diablo:izquierda | 48,48@00:14.5 | no | no | ¡Después usas la pantalla con los dedos llenos de Cheetos picantes sin que te importe mancharlo!
+00:18 - 00:22 | hablando | error+fart | enojo:derecha | ninguna | no | no | ¡Y cuando suena la alarma temprano lo revoleas directo contra la pared para seguir durmiendo!
 """
 
 
@@ -183,6 +189,11 @@ def _normalizar_gesto(gesto_raw: Optional[str]) -> str:
         "mente_explotando": "hablando",
         "senalar": "hablando",
         "duda": "hablando",
+        "hablando_2": "hablando2",
+        "hablando 2": "hablando2",
+        "hablar2": "hablando2",
+        "reaccion2": "hablando2",
+        "explicando2": "hablando2",
         "festejo": "like",
         "festejando_pro": "like",
         "pulgar": "like",
@@ -197,14 +208,82 @@ def _normalizar_gesto(gesto_raw: Optional[str]) -> str:
     return g
 
 
-def _normalizar_sfx(sfx_raw: Optional[str]) -> Optional[str]:
+def _desglosar_sfx_lista(sfx_raw: Optional[str]) -> List[str]:
     if not sfx_raw:
-        return None
-    s = _quitar_acentos(str(sfx_raw).strip().lower())
-    s = s.replace(".wav", "").replace(".mp3", "")
-    if not s or s in ("ninguno", "ninguna", "none", "no", "false", "-", "sin_sfx"):
-        return None
-    return s
+        return []
+    raw_clean = _quitar_acentos(str(sfx_raw).strip().lower())
+    raw_clean = raw_clean.replace(".mp3", "").replace(".wav", "").replace(".ogg", "")
+    if not raw_clean or raw_clean in ("ninguno", "ninguna", "none", "no", "false", "-", "sin_sfx"):
+        return []
+
+    sinonimos_sfx = {
+        "sorpresa": "crowd_shocked",
+        "asombro": "crowd_shocked",
+        "multitud": "crowd_shocked",
+        "campana": "boxing_bell",
+        "bell": "boxing_bell",
+        "boxeo": "boxing_bell",
+        "round": "boxing_bell",
+        "flash": "camera_flash",
+        "destello": "camera_flash",
+        "foto": "camera_shooter",
+        "camara": "camera_shooter",
+        "screenshot": "camera_shooter",
+        "risa": "cartoon_laugh",
+        "risas": "cartoon_laugh",
+        "laugh": "cartoon_laugh",
+        "dinero": "cash_ting",
+        "caja": "cash_ting",
+        "cash": "cash_ting",
+        "moneda": "cash_ting",
+        "robux": "cash_ting",
+        "idea": "good_idea",
+        "brillante": "good_idea",
+        "correcto": "ding",
+        "acierto": "ding",
+        "festejo": "kids_yeyy",
+        "celebracion": "kids_yeyy",
+        "yey": "kids_yeyy",
+        "ninos": "kids_yeyy",
+        "corneta": "party_horn",
+        "fiesta": "party_horn",
+        "party": "party_horn",
+        "golpe": "punch",
+        "impacto": "punch",
+        "pelea": "punch",
+        "subida": "riser_suction",
+        "riser": "riser_suction",
+        "suction": "riser_suction",
+        "tension": "riser_suction",
+        "transicion": "whoosh",
+        "viento": "whoosh",
+        "windows": "xp_error",
+        "xp": "xp_error",
+        "bug": "xp_error",
+        "fallo": "error",
+        "fail": "xp_error",
+        "pedo": "fart",
+        "broma": "fart",
+        "tierno": "awww",
+        "triste": "awww",
+        "aww": "awww",
+    }
+
+    partes = re.split(r"[+,;/]", raw_clean)
+    resultado: List[str] = []
+    for p in partes:
+        item = p.strip().replace(" ", "_")
+        if not item or item in ("ninguno", "ninguna", "none", "no", "-"):
+            continue
+        item_norm = sinonimos_sfx.get(item, item)
+        if item_norm not in resultado:
+            resultado.append(item_norm)
+    return resultado
+
+
+def _normalizar_sfx(sfx_raw: Optional[str]) -> Optional[str]:
+    lista = _desglosar_sfx_lista(sfx_raw)
+    return "+".join(lista) if lista else None
 
 
 def _normalizar_emoji(emoji_raw: Optional[str]) -> Tuple[Optional[str], str]:
@@ -261,24 +340,136 @@ def _normalizar_emoji(emoji_raw: Optional[str]) -> Tuple[Optional[str], str]:
 
 
 def _normalizar_flecha(flecha_raw: Optional[str]) -> Optional[str]:
+    """
+    Normaliza la columna FLECHA. Formatos aceptados (v4.2 - Flecha Inteligente):
+      - `ninguna` / `no` / `-`          -> sin flecha
+      - `auto`                           -> detecta sola el objeto con más acción y lo sigue
+      - `45,60`                          -> apunta al punto X=45% Y=60% del video y lo SIGUE (tracking)
+      - `45,60@00:05.5`                  -> igual, pero aparece en el segundo 5.5 del video original
+      - `45,60@1.2`                      -> aparece 1.2s después del inicio del segmento
+      - `izquierda`/`derecha`/`arriba`/`abajo`/`centro` -> busca la acción en esa zona y la sigue
+      - Agregar ` fija` (ej. `45,60 fija`) desactiva el seguimiento.
+    """
     if not flecha_raw:
         return None
     f = _quitar_acentos(str(flecha_raw).strip().lower()).replace(".png", "")
+    f = re.sub(r"\s+", " ", f).strip()
     if f.startswith("flecha:"):
         f = f.split(":", 1)[1].strip()
-    elif f == "flecha" or f in ("si", "true", "1", "activa"):
-        return "centro"
+    elif f in ("flecha", "si", "yes", "true", "1", "activa"):
+        return "auto"
 
     if not f or f in ("ninguna", "ninguno", "none", "no", "false", "-", "0"):
         return None
+    # Quitar espacios alrededor de la coma y del '@' (ej. "45 , 60 @ 0:05")
+    f = re.sub(r"\s*,\s*", ",", f)
+    f = re.sub(r"\s*@\s*", "@", f)
     return f
+
+
+def _prioridad_flecha(flecha: str) -> int:
+    """Mayor = más precisa. Coordenadas con tiempo > coordenadas > auto con tiempo > zona/auto."""
+    tiene_coord = bool(re.match(r"^\s*\d+(\.\d+)?,\d+(\.\d+)?", flecha))
+    tiene_tiempo = "@" in flecha
+    return (2 if tiene_coord else 0) + (1 if tiene_tiempo else 0)
+
+
+def _limitar_a_una_flecha(segmentos: List["SegmentoVideoGuion"]) -> None:
+    """Regla del canal: como máximo UNA flecha por video (la más precisa / importante)."""
+    con_flecha = [i for i, s in enumerate(segmentos) if s.flecha]
+    if len(con_flecha) <= 1:
+        return
+    elegido = max(con_flecha, key=lambda i: (_prioridad_flecha(segmentos[i].flecha or ""), -i))
+    for i in con_flecha:
+        if i != elegido:
+            segmentos[i].flecha = None
+    print(
+        f"[*] Flecha: el guion pedía {len(con_flecha)} flechas; se usa solo 1 por video "
+        f"(segmento {elegido + 1}: '{segmentos[elegido].flecha}')."
+    )
 
 
 def _normalizar_bool(val_raw: object) -> bool:
     if isinstance(val_raw, bool):
         return val_raw
     s = _quitar_acentos(str(val_raw).strip().lower())
-    return s in ("si", "yes", "true", "1", "like_sub", "likesub", "activo", "activar")
+    return s in ("si", "yes", "true", "1", "like_sub", "likesub", "activo", "activar", "si+timer")
+
+
+def _normalizar_timer(val_raw: object) -> bool:
+    if isinstance(val_raw, bool):
+        return val_raw
+    s = _quitar_acentos(str(val_raw).strip().lower()).replace(".mp4", "")
+    return s in ("si", "yes", "true", "1", "timer", "reloj", "cuenta_atras", "countdown", "activo", "activar", "si+timer")
+
+
+def _es_columna_timer_explicita(val_raw: str) -> bool:
+    s = _quitar_acentos(val_raw.strip().lower()).replace(".mp4", "")
+    return s in (
+        "si", "no", "yes", "true", "false", "1", "0",
+        "timer", "reloj", "cuenta_atras", "countdown",
+        "ninguno", "ninguna", "none", "-", "activo", "activar",
+    )
+
+
+def _postprocesar_segmentos_trivia_y_gestos(
+    segmentos: List[SegmentoVideoGuion],
+    tuvo_columna_timer_explicita: bool,
+) -> None:
+    """
+    1) Si el guion viene en formato de 7 columnas (sin columna TIMER explícita) y contiene
+       preguntas de trivia (ej. SFX 'tictac' con pregunta '?', o dice 'tienes tres segundos',
+       o el segmento siguiente empieza con '¡Tiempo!' / '¡Exacto!'), activa automáticamente
+       el timer de 3.5s luego de la pregunta.
+    2) Si existe 'hablando2.mp4' en assets/gestos, intercala automáticamente entre 'hablando'
+       y 'hablando2' en los segmentos hablados para dar variedad natural y evitar repetición.
+    """
+    if not segmentos:
+        return
+
+    # 0. Máximo una flecha por video
+    _limitar_a_una_flecha(segmentos)
+
+    # 1. Detección inteligente de preguntas de trivia cuando no se especificó columna TIMER
+    if not tuvo_columna_timer_explicita:
+        for i, seg in enumerate(segmentos):
+            if seg.mostrar_timer:
+                continue
+            txt_low = _quitar_acentos(seg.texto_voz.lower())
+            tiene_pregunta = ("?" in seg.texto_voz) or ("¿" in seg.texto_voz)
+            dice_segundos = any(
+                k in txt_low
+                for k in ("tres segundos", "3 segundos", "cinco segundos", "5 segundos", "tiempo para adivinar")
+            )
+            sig_es_respuesta = False
+            if i + 1 < len(segmentos):
+                sig_low = _quitar_acentos(segmentos[i + 1].texto_voz.lower())
+                sig_es_respuesta = any(
+                    sig_low.startswith(pref) or f"¡{pref}" in sig_low or f"!{pref}" in sig_low
+                    for pref in ("tiempo", "exacto", "correcto", "es ", "la respuesta", "acertaste", "comenta tu respuesta")
+                )
+
+            if dice_segundos or (tiene_pregunta and (seg.sfx_inicio == "tictac" or sig_es_respuesta)):
+                seg.mostrar_timer = True
+
+    # 2. Intercalado inteligente entre 'hablando' y 'hablando2'
+    tiene_hablando2_asset = (GESTOS_DIR / "hablando2.mp4").exists()
+    if tiene_hablando2_asset:
+        uso_hablando2_manual = any(s.gesto_personaje == "hablando2" for s in segmentos)
+        if not uso_hablando2_manual:
+            contador_hablando = 0
+            for seg in segmentos:
+                if seg.gesto_personaje == "hablando":
+                    if contador_hablando % 2 == 1:
+                        seg.gesto_personaje = "hablando2"
+                    contador_hablando += 1
+        else:
+            for i in range(1, len(segmentos)):
+                if (
+                    segmentos[i].gesto_personaje == "hablando"
+                    and segmentos[i - 1].gesto_personaje == "hablando"
+                ):
+                    segmentos[i].gesto_personaje = "hablando2"
 
 
 def cargar_guion_video(ruta_guion: Path) -> ConfigGuion:
@@ -346,6 +537,11 @@ def cargar_guion_video(ruta_guion: Path) -> ConfigGuion:
                 pos_emoji = _quitar_acentos(str(seg["posicion_emoji"]).strip().lower())
             flecha = _normalizar_flecha(seg.get("flecha", None))
             like_sub = _normalizar_bool(seg.get("like_sub", seg.get("mostrar_like_sub", False)))
+            timer_raw = seg.get("timer", seg.get("mostrar_timer", False))
+            mostrar_timer = _normalizar_timer(timer_raw)
+            if sfx == "timer":
+                mostrar_timer = True
+                sfx = "tictac"
             pausa = float(seg.get("pausa", 0.18))
             texto = str(seg.get("texto", seg.get("texto_voz", seg.get("texto_voz_tts", "")))).strip()
 
@@ -363,12 +559,16 @@ def cargar_guion_video(ruta_guion: Path) -> ConfigGuion:
                         posicion_emoji=pos_emoji,
                         flecha=flecha,
                         mostrar_like_sub=like_sub,
+                        mostrar_timer=mostrar_timer,
                     )
                 )
+        tuvo_timer_json = any(("timer" in s or "mostrar_timer" in s) for s in datos.get("segmentos", []))
+        _postprocesar_segmentos_trivia_y_gestos(config.segmentos, tuvo_timer_json)
         return config
 
     # 2. Formato Bloc de Notas (.txt separado por '|')
     en_guion = False
+    tuvo_columna_timer_explicita = False
     for linea in contenido.splitlines():
         limpia = linea.strip()
         if not limpia or limpia.startswith("#") or limpia.startswith("//"):
@@ -416,11 +616,32 @@ def cargar_guion_video(ruta_guion: Path) -> ConfigGuion:
         pos_emoji = "derecha"
         flecha: Optional[str] = None
         like_sub = False
+        mostrar_timer = False
         pausa = 0.18
         texto_voz = ""
 
-        if len(partes) >= 7:
-            # FORMATO COMPLETO v4.0:
+        if len(partes) >= 8 and _es_columna_timer_explicita(partes[6]):
+            # FORMATO COMPLETO v4.1 (CON TIMER EXPLÍCITO):
+            # TIEMPO | GESTO | SFX | EMOJI | FLECHA | LIKE_SUB | TIMER | TEXTO
+            tuvo_columna_timer_explicita = True
+            rango_t, gesto_str, sfx_str, emoji_str, flecha_str, likesub_str, timer_str = partes[:7]
+            texto_voz = " | ".join(partes[7:]).strip()
+            if "-" in rango_t and rango_t.lower() != "-":
+                t1, t2 = rango_t.split("-", 1)
+                t_ini = _parsear_tiempo_a_segundos(t1)
+                t_fin = _parsear_tiempo_a_segundos(t2)
+            gesto = _normalizar_gesto(gesto_str)
+            sfx = _normalizar_sfx(sfx_str)
+            emoji, pos_emoji = _normalizar_emoji(emoji_str)
+            flecha = _normalizar_flecha(flecha_str)
+            like_sub = _normalizar_bool(likesub_str)
+            mostrar_timer = _normalizar_timer(timer_str)
+            if sfx == "timer":
+                mostrar_timer = True
+                sfx = "tictac"
+
+        elif len(partes) >= 7:
+            # FORMATO 7 COLUMNAS:
             # TIEMPO | GESTO | SFX | EMOJI | FLECHA | LIKE_SUB | TEXTO
             rango_t, gesto_str, sfx_str, emoji_str, flecha_str, likesub_str = partes[:6]
             texto_voz = " | ".join(partes[6:]).strip()
@@ -433,6 +654,16 @@ def cargar_guion_video(ruta_guion: Path) -> ConfigGuion:
             emoji, pos_emoji = _normalizar_emoji(emoji_str)
             flecha = _normalizar_flecha(flecha_str)
             like_sub = _normalizar_bool(likesub_str)
+            if _normalizar_timer(likesub_str) and not like_sub:
+                mostrar_timer = True
+                tuvo_columna_timer_explicita = True
+            elif "timer" in _quitar_acentos(likesub_str.lower()):
+                mostrar_timer = True
+                tuvo_columna_timer_explicita = True
+            if sfx == "timer":
+                mostrar_timer = True
+                tuvo_columna_timer_explicita = True
+                sfx = "tictac"
 
         elif len(partes) == 6:
             # TIEMPO | GESTO | SFX | EMOJI | LIKE_SUB | TEXTO
@@ -445,6 +676,8 @@ def cargar_guion_video(ruta_guion: Path) -> ConfigGuion:
             sfx = _normalizar_sfx(sfx_str)
             emoji, pos_emoji = _normalizar_emoji(emoji_str)
             like_sub = _normalizar_bool(likesub_str)
+            if _normalizar_timer(likesub_str) and not like_sub:
+                mostrar_timer = True
 
         elif len(partes) == 5:
             # Compatibilidad v3.0: TIEMPO | GESTO | SFX | PAUSA_O_EMOJI | TEXTO
@@ -501,9 +734,11 @@ def cargar_guion_video(ruta_guion: Path) -> ConfigGuion:
                     posicion_emoji=pos_emoji,
                     flecha=flecha,
                     mostrar_like_sub=like_sub,
+                    mostrar_timer=mostrar_timer,
                 )
             )
 
+    _postprocesar_segmentos_trivia_y_gestos(config.segmentos, tuvo_columna_timer_explicita)
     return config
 
 
@@ -803,7 +1038,13 @@ def _dividir_clausulas_expresivas(texto: str) -> List[str]:
     return [p.strip() for p in partes if p.strip()]
 
 
-def _prosodia_dinamica_clausula(clausula: str, idx: int, total: int) -> Tuple[str, str, str, float]:
+def _prosodia_dinamica_clausula(
+    clausula: str,
+    idx: int,
+    total: int,
+    dur_objetivo_seg: Optional[float] = None,
+    total_palabras_seg: int = 0,
+) -> Tuple[str, str, str, float]:
     es_exclamacion = "!" in clausula or "¡" in clausula
     es_pregunta = "?" in clausula or "¿" in clausula
     palabras_low = set(re.findall(r"[a-záéíóúüñ]+", clausula.lower()))
@@ -811,18 +1052,36 @@ def _prosodia_dinamica_clausula(clausula: str, idx: int, total: int) -> Tuple[st
 
     pitch = EDGE_PITCH if EDGE_PITCH != "+8Hz" else "+0Hz"
 
+    # Calcular densidad de palabras por segundo para adaptar ritmo base sin apurar ni dejar silencios
+    wps = (total_palabras_seg / dur_objetivo_seg) if (dur_objetivo_seg and dur_objetivo_seg > 0.4) else 3.5
+    if wps > 4.6:
+        boost_rate = 10
+        escala_pausa = 0.45
+    elif wps > 3.9:
+        boost_rate = 5
+        escala_pausa = 0.65
+    elif wps < 2.8:
+        boost_rate = -3
+        escala_pausa = 1.05
+    else:
+        boost_rate = 0
+        escala_pausa = 0.85
+
     if es_exclamacion:
         if idx == 0:
-            return "+13%", pitch, "+8%", 0.065
+            base_r, vol, pausa = 13, "+8%", 0.055
         elif idx == total - 1:
-            return "+14%", pitch, "+10%", 0.075
+            base_r, vol, pausa = 14, "+10%", 0.060
         else:
-            return "+15%", pitch, "+6%", 0.070
+            base_r, vol, pausa = 15, "+6%", 0.055
     elif es_pregunta:
-        return "+12%", pitch, "+6%", 0.080
+        base_r, vol, pausa = 12, "+6%", 0.065
     else:
-        rate_narrativo = "+11%" if tiene_hype else "+9%"
-        return rate_narrativo, pitch, "+0%", 0.085
+        base_r = 11 if tiene_hype else 9
+        vol, pausa = "+0%", 0.065
+
+    rate_final = max(0, min(32, base_r + boost_rate))
+    return f"+{rate_final}%", pitch, vol, round(pausa * escala_pausa, 4)
 
 
 def _recortar_silencio_clausula_pcm(
@@ -844,13 +1103,13 @@ def _recortar_silencio_clausula_pcm(
         dur = len(pcm_float) / float(sr)
         return pcm_float, 0.0, dur
 
-    pad_ini = int(sr * 0.018)
-    pad_fin = int(sr * 0.026)
+    pad_ini = int(sr * 0.014)
+    pad_fin = int(sr * 0.022)
     i0 = max(0, int(activos[0]) * win - pad_ini)
     i1 = min(len(pcm_float), int(activos[-1] + 1) * win + pad_fin)
     recortado = pcm_float[i0:i1].copy()
 
-    fade_len = min(int(sr * 0.008), len(recortado) // 4)
+    fade_len = min(int(sr * 0.007), len(recortado) // 4)
     if fade_len > 1:
         recortado[:fade_len] *= np.linspace(0.0, 1.0, fade_len, dtype=np.float32)
         recortado[-fade_len:] *= np.linspace(1.0, 0.0, fade_len, dtype=np.float32)
@@ -858,8 +1117,32 @@ def _recortar_silencio_clausula_pcm(
     return recortado, i0 / float(sr), len(recortado) / float(sr)
 
 
-def masterizar_voz_estudio_ffmpeg(ruta_entrada: Path, ruta_wav_salida: Path) -> None:
+def _construir_cadena_atempo(factor: float) -> str:
+    """Construye una cadena de filtros atempo válida para FFmpeg manteniendo el tono natural."""
+    f = float(np.clip(factor, 0.50, 3.20))
+    if abs(f - 1.0) < 0.012:
+        return ""
+    partes: List[str] = []
+    while f > 2.0:
+        partes.append("atempo=2.0000")
+        f /= 2.0
+    while f < 0.5:
+        partes.append("atempo=0.5000")
+        f /= 0.5
+    if abs(f - 1.0) >= 0.010:
+        partes.append(f"atempo={f:.4f}")
+    return ",".join(partes)
+
+
+def masterizar_voz_estudio_ffmpeg(
+    ruta_entrada: Path,
+    ruta_wav_salida: Path,
+    factor_atempo: float = 1.0,
+) -> None:
+    cadena_atempo = _construir_cadena_atempo(factor_atempo)
+    prefijo_atempo = f"{cadena_atempo}," if cadena_atempo else ""
     filtro_audio = (
+        f"{prefijo_atempo}"
         "highpass=f=80,"
         "equalizer=f=135:width_type=o:width=1.1:g=2.4,"
         "equalizer=f=320:width_type=o:width=1.2:g=-1.2,"
@@ -927,6 +1210,7 @@ def intentar_voz_elevenlabs(texto: str, ruta_mp3: Path) -> bool:
 async def generar_voz_y_timestamps_segmento(
     texto: str,
     ruta_audio_salida: Path,
+    dur_objetivo_seg: Optional[float] = None,
 ) -> Tuple[float, List[PalabraSubtitulo], float, float]:
     palabras_raw: List[PalabraSubtitulo] = []
     genero_audio = False
@@ -935,6 +1219,8 @@ async def generar_voz_y_timestamps_segmento(
         ruta_audio_salida.unlink()
     if ruta_wav.exists():
         ruta_wav.unlink()
+
+    total_palabras_seg = len(texto.split())
 
     if ELEVENLABS_API_KEY:
         genero_audio = intentar_voz_elevenlabs(texto, ruta_audio_salida)
@@ -954,7 +1240,7 @@ async def generar_voz_y_timestamps_segmento(
             for c_idx, cl_orig in enumerate(clausulas_orig):
                 cl_tts = _normalizar_fonetica_youtuber(cl_orig)
                 rate_c, pitch_c, vol_c, pausa_post = _prosodia_dinamica_clausula(
-                    cl_orig, c_idx, len(clausulas_orig)
+                    cl_orig, c_idx, len(clausulas_orig), dur_objetivo_seg, total_palabras_seg
                 )
                 tmp_mp3 = ruta_audio_salida.parent / f"{ruta_audio_salida.stem}_c{c_idx}.mp3"
                 tmp_wav = ruta_audio_salida.parent / f"{ruta_audio_salida.stem}_c{c_idx}.wav"
@@ -1041,25 +1327,44 @@ async def generar_voz_y_timestamps_segmento(
 
             if bloques_pcm:
                 audio_crudo = np.clip(np.concatenate(bloques_pcm), -0.98, 0.98)
+                dur_cruda = len(audio_crudo) / float(sr)
+
+                # Ajuste elástico de tempo por segmento:
+                # Garantiza que la voz encaje de corrido en su ventana exacta sin cortar la última palabra
+                # ni dejar huecos de silencio en blanco entre bloques.
+                factor_atempo = 1.0
+                if dur_objetivo_seg is not None and dur_objetivo_seg > 0.35 and dur_cruda > 0.15:
+                    dur_ideal_voz = max(0.35, dur_objetivo_seg - 0.06)
+                    if dur_cruda > dur_ideal_voz:
+                        factor_atempo = float(np.clip(dur_cruda / dur_ideal_voz, 1.0, 2.40))
+                    elif dur_cruda < dur_ideal_voz * 0.93:
+                        factor_atempo = float(np.clip(dur_cruda / (dur_ideal_voz * 0.96), 0.80, 1.0))
+
                 ruta_crudo_wav = ruta_audio_salida.parent / f"{ruta_audio_salida.stem}_raw.wav"
                 with wave.open(str(ruta_crudo_wav), "w") as wf_raw:
                     wf_raw.setnchannels(1)
                     wf_raw.setsampwidth(2)
                     wf_raw.setframerate(sr)
                     wf_raw.writeframes((audio_crudo * 32767).astype(np.int16).tobytes())
-                masterizar_voz_estudio_ffmpeg(ruta_crudo_wav, ruta_wav)
+                masterizar_voz_estudio_ffmpeg(ruta_crudo_wav, ruta_wav, factor_atempo=factor_atempo)
                 if ruta_crudo_wav.exists():
                     try:
                         ruta_crudo_wav.unlink()
                     except OSError:
                         pass
+
+                if abs(factor_atempo - 1.0) >= 0.010 and palabras_raw:
+                    for p in palabras_raw:
+                        p.inicio_seg /= factor_atempo
+                        p.fin_seg /= factor_atempo
+
                 genero_audio = ruta_wav.exists() and ruta_wav.stat().st_size > 0
         except Exception as e:
             print(f"[!] Error en Edge-TTS: {e}")
 
     if not ruta_wav.exists() or ruta_wav.stat().st_size == 0:
         tokens = texto.split()
-        dur_estimada = max(1.8, len(tokens) * 0.28)
+        dur_estimada = dur_objetivo_seg if (dur_objetivo_seg and dur_objetivo_seg > 0.4) else max(1.8, len(tokens) * 0.28)
         sr = 44100
         t = np.linspace(0, dur_estimada, int(sr * dur_estimada), False)
         audio_sim = np.sin(2 * np.pi * 195 * t) * 0.25
@@ -1121,6 +1426,7 @@ class MotorPersonajeMrNubsitoV2:
         self.clips_fps: Dict[str, float] = {}
         self.gesto_previo: Optional[str] = None
         self.t_acumulado_gesto: float = 0.0
+        self.t_cursor_hablando: Dict[str, float] = {"hablando": 0.0, "hablando2": 0.0}
         self._cargar_clips_mp4()
 
     @staticmethod
@@ -1182,10 +1488,47 @@ class MotorPersonajeMrNubsitoV2:
         else:
             gesto_activo = "idle"
 
-        # Si el gesto se mantiene igual (incluso entre dos segmentos seguidos con 'hablando'),
-        # continuar el tiempo acumulado sin reiniciar el video para evitar cortes.
+        dt = 1.0 / float(FPS)
+
+        # Si está en modo hablado ('hablando' o 'hablando2') y ambos assets existen,
+        # cuando un clip termina su duración natural encadena automáticamente con el otro
+        # para no repetir en loop en videos largos y mantener la continuidad del cursor.
+        if gesto_activo in ("hablando", "hablando2"):
+            tiene_ambos = ("hablando" in self.clips_cache) and ("hablando2" in self.clips_cache)
+            if tiene_ambos:
+                f_h1 = self.clips_cache["hablando"]
+                f_h2 = self.clips_cache["hablando2"]
+                dur_h1 = max(0.5, len(f_h1) / self.clips_fps.get("hablando", 24.0))
+                dur_h2 = max(0.5, len(f_h2) / self.clips_fps.get("hablando2", 24.0))
+                dur_ciclo_doble = dur_h1 + dur_h2
+
+                t_cur = self.t_cursor_hablando.get(gesto_activo, 0.0)
+                self.t_cursor_hablando[gesto_activo] = t_cur + dt
+                t_mod = t_cur % dur_ciclo_doble
+
+                if gesto_activo == "hablando":
+                    if t_mod < dur_h1:
+                        clip_usar = "hablando"
+                        t_local = t_mod
+                    else:
+                        clip_usar = "hablando2"
+                        t_local = t_mod - dur_h1
+                else:
+                    if t_mod < dur_h2:
+                        clip_usar = "hablando2"
+                        t_local = t_mod
+                    else:
+                        clip_usar = "hablando"
+                        t_local = t_mod - dur_h2
+
+                clip_frames = self.clips_cache[clip_usar]
+                fps_c = self.clips_fps.get(clip_usar, 24.0)
+                idx = min(len(clip_frames) - 1, max(0, int(round(t_local * fps_c))))
+                self.gesto_previo = gesto_activo
+                return Image.fromarray(clip_frames[idx], mode="RGB").convert("RGBA")
+
         if gesto_activo == self.gesto_previo:
-            self.t_acumulado_gesto += 1.0 / float(FPS)
+            self.t_acumulado_gesto += dt
         else:
             self.gesto_previo = gesto_activo
             self.t_acumulado_gesto = 0.0
@@ -1234,15 +1577,21 @@ class GestorAssetsVisuales:
     3) El video `assets/Like&Sub.mp4` con eliminación de pantalla verde (Chroma Key + Despill) y su audio.
     """
 
-    def __init__(self, emojis_dir: Path, like_sub_path: Path):
+    def __init__(self, emojis_dir: Path, like_sub_path: Path, timer_path: Path = TIMER_PATH):
         self.emojis_cache: Dict[str, Image.Image] = {}
         self.flecha_base: Optional[Image.Image] = None
         self.likesub_frames: List[Image.Image] = []
         self.likesub_fps: float = 25.0
         self.likesub_audio_pcm: Optional[np.ndarray] = None
 
+        self.timer_frames: List[Image.Image] = []
+        self.timer_fps: float = 30.0
+        self.timer_duracion: float = DURACION_TIMER_SEG
+        self.timer_audio_pcm: Optional[np.ndarray] = None
+
         self._cargar_emojis_y_flecha(emojis_dir)
         self._cargar_like_sub_chromakey(like_sub_path)
+        self._cargar_timer_chromakey(timer_path)
 
     def _cargar_emojis_y_flecha(self, emojis_dir: Path) -> None:
         if not emojis_dir.exists():
@@ -1335,6 +1684,72 @@ class GestorAssetsVisuales:
 
         print(f"[*] Overlay Like&Sub cargado (Chroma Key activo): {len(self.likesub_frames)} frames útiles")
 
+    def _cargar_timer_chromakey(self, timer_path: Path) -> None:
+        if not timer_path.exists():
+            return
+
+        cap = cv2.VideoCapture(str(timer_path))
+        self.timer_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        w_vid = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 1080)
+        h_vid = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 1920)
+
+        # Recortar la región donde se ubica el reloj en timer.mp4 (x=420..660, y=1355..1635 en 1080x1920)
+        # y escalarla por 1.25x para que se vea grande, nítida y llamativa en pantalla.
+        x0 = max(0, int(round(w_vid * (420.0 / 1080.0))))
+        x1 = min(w_vid, int(round(w_vid * (660.0 / 1080.0))))
+        y0 = max(0, int(round(h_vid * (1355.0 / 1920.0))))
+        y1 = min(h_vid, int(round(h_vid * (1635.0 / 1920.0))))
+        escala = 1.25
+        target_w = max(32, int(round((x1 - x0) * escala)))
+        target_h = max(32, int(round((y1 - y0) * escala)))
+
+        frames_rgba: List[Image.Image] = []
+        while True:
+            ret, frame_bgr = cap.read()
+            if not ret:
+                break
+            recorte_bgr = frame_bgr[y0:y1, x0:x1]
+            recorte_rgb = cv2.cvtColor(recorte_bgr, cv2.COLOR_BGR2RGB).astype(np.float32)
+
+            r = recorte_rgb[:, :, 0]
+            g = recorte_rgb[:, :, 1]
+            b = recorte_rgb[:, :, 2]
+            max_rb = np.maximum(r, b)
+            exceso_verde = g - max_rb
+
+            alpha = np.clip(1.0 - (exceso_verde - 25.0) / 50.0, 0.0, 1.0)
+            if float(np.max(alpha)) < 0.02:
+                frames_rgba.append(Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0)))
+                continue
+
+            g_limpio = np.where(alpha < 0.99, np.minimum(g, max_rb), g)
+            rgba_np = np.dstack([r, g_limpio, b, alpha * 255.0]).astype(np.uint8)
+            img_rgba = Image.fromarray(rgba_np, mode="RGBA").resize((target_w, target_h), Image.Resampling.LANCZOS)
+            frames_rgba.append(img_rgba)
+
+        cap.release()
+
+        if frames_rgba:
+            self.timer_frames = frames_rgba
+            self.timer_duracion = DURACION_TIMER_SEG
+
+        # Extraer audio del timer (tic-tac / cuenta regresiva de timer.mp4)
+        try:
+            res = subprocess.run(
+                ["ffmpeg", "-i", str(timer_path), "-f", "s16le", "-ac", "1", "-ar", "44100", "-"],
+                capture_output=True,
+                check=False,
+            )
+            if res.returncode == 0 and len(res.stdout) > 0:
+                self.timer_audio_pcm = np.frombuffer(res.stdout, dtype=np.int16).astype(np.float32) / 32768.0
+        except Exception:
+            pass
+
+        print(
+            f"[*] Overlay Timer de Trivia cargado (Chroma Key activo): "
+            f"{len(self.timer_frames)} frames ({self.timer_duracion:.1f}s)"
+        )
+
     def dibujar_emoji(
         self,
         lienzo: Image.Image,
@@ -1397,84 +1812,76 @@ class GestorAssetsVisuales:
         ew, eh = emoji_img.size
         lienzo.alpha_composite(emoji_img, dest=(max(0, cx - ew // 2), max(0, cy - eh // 2)))
 
-    def dibujar_flecha(
+    def dibujar_flecha_inteligente(
         self,
         lienzo: Image.Image,
-        direccion_o_coord: Optional[str],
-        t_seg: float,
-        dur_seg: float,
+        plan: Optional["PlanFlecha"],
+        f_idx: int,
         es_split: bool,
     ) -> None:
-        if not direccion_o_coord or self.flecha_base is None:
+        """
+        Dibuja la flecha roja siguiendo el plan de tracking precalculado:
+        - Aparece con un 'pop' elástico, señala con rebote y se desvanece al final.
+        - Siempre apunta al objetivo (que se mueve con la acción del video).
+        - Se coloca del lado con más espacio libre para no tapar la acción.
+        """
+        if plan is None or self.flecha_base is None:
             return
-
-        dur_mostrar = min(dur_seg - 0.05, 3.5)
-        if t_seg < 0.05 or t_seg > dur_mostrar:
+        k = f_idx - plan.frame_inicio
+        if k < 0 or k >= len(plan.xs):
             return
 
         y_video_top = TOP_HEIGHT if es_split else 0
         h_video = BOTTOM_HEIGHT if es_split else HEIGHT
+        tx = float(plan.xs[k])
+        ty = float(plan.ys[k]) + y_video_top
+        n = len(plan.xs)
+        t_local = k / float(FPS)
+        t_rest = (n - 1 - k) / float(FPS)
 
-        # Determinar el punto objetivo (tx, ty) que queremos señalar y el ángulo de la flecha.
-        # Nota: En `assets/emojis/flecha.png`, la punta de la flecha apunta hacia la IZQUIERDA (180°).
-        dir_clean = _quitar_acentos(direccion_o_coord.strip().lower())
-        angulo_rot = -25.0  # Por defecto apunta en diagonal hacia abajo-izquierda al centro
-        tx, ty = WIDTH // 2, y_video_top + int(h_video * 0.52)
-        offset_dir = (1.0, -0.45)  # Dirección desde la punta hacia la cola de la flecha
-
-        if "," in dir_clean:
-            try:
-                px_str, py_str = dir_clean.split(",", 1)
-                px = float(px_str.strip())
-                py = float(py_str.strip())
-                if px <= 100.0 and py <= 100.0:
-                    tx = int(WIDTH * (px / 100.0))
-                    ty = y_video_top + int(h_video * (py / 100.0))
-                else:
-                    tx, ty = int(px), int(py)
-                if tx < WIDTH // 2:
-                    angulo_rot = -20.0
-                    offset_dir = (1.0, -0.35)
-                else:
-                    angulo_rot = -160.0
-                    offset_dir = (-1.0, -0.35)
-            except ValueError:
-                pass
-        elif dir_clean == "izquierda":
-            tx, ty = int(WIDTH * 0.25), y_video_top + int(h_video * 0.52)
-            angulo_rot = 0.0  # Punta hacia la izquierda
-            offset_dir = (1.0, 0.0)
-        elif dir_clean == "derecha":
-            tx, ty = int(WIDTH * 0.75), y_video_top + int(h_video * 0.52)
-            angulo_rot = 180.0  # Punta hacia la derecha
-            offset_dir = (-1.0, 0.0)
-        elif dir_clean == "arriba":
-            tx, ty = WIDTH // 2, y_video_top + int(h_video * 0.28)
-            angulo_rot = -90.0  # En PIL rotate(-90) lleva la punta izquierda hacia ARRIBA
-            offset_dir = (0.0, 1.0)
-        elif dir_clean == "abajo":
-            tx, ty = WIDTH // 2, y_video_top + int(h_video * 0.78)
-            angulo_rot = 90.0   # En PIL rotate(90) lleva la punta izquierda hacia ABAJO
-            offset_dir = (0.0, -1.0)
+        # Animación: pop elástico de entrada (0.22s) + fade/encogido de salida (0.18s)
+        if t_local < 0.22:
+            p = t_local / 0.22
+            c1 = 1.70158
+            ease_back = 1.0 + (c1 + 1.0) * (p - 1.0) ** 3 + c1 * (p - 1.0) ** 2
+            escala = 0.2 + 0.8 * ease_back
         else:
-            # "centro"
-            tx, ty = WIDTH // 2, y_video_top + int(h_video * 0.52)
-            angulo_rot = -25.0
-            offset_dir = (0.90, -0.42)
+            escala = 1.0
+        alpha = 1.0
+        if t_rest < 0.18:
+            q = max(0.0, t_rest / 0.18)
+            alpha = q
+            escala *= 0.75 + 0.25 * q
 
-        tam_flecha = 230
-        flecha_scaled = self.flecha_base.resize((tam_flecha, tam_flecha), Image.Resampling.LANCZOS)
+        # Dirección de la cola (desde la punta hacia atrás), suavizada en el plan
+        cola_x = float(plan.cola_x[k])
+        cola_y = float(plan.cola_y[k])
+        norma = math.hypot(cola_x, cola_y) or 1.0
+        cola_x, cola_y = cola_x / norma, cola_y / norma
+
+        # La punta del PNG apunta a la IZQUIERDA (180°). Vector punta = -cola.
+        dx, dy = -cola_x, -cola_y
+        angulo_deseado = math.degrees(math.atan2(-dy, dx))
+        angulo_rot = angulo_deseado - 180.0
+
+        tam = max(24, int(round(210 * escala)))
+        flecha_scaled = self.flecha_base.resize((tam, tam), Image.Resampling.LANCZOS)
         flecha_rot = flecha_scaled.rotate(angulo_rot, resample=Image.Resampling.BICUBIC, expand=True)
+        if alpha < 0.999:
+            a = flecha_rot.getchannel("A").point(lambda v: int(v * alpha))
+            flecha_rot.putalpha(a)
 
-        # Rebote rítmico de "señalar" a lo largo del eje de la flecha
-        rebote = 28.0 * abs(math.sin(t_seg * 9.5))
-        dist_centro_flecha = 135.0 + rebote
-        cx = int(round(tx + offset_dir[0] * dist_centro_flecha))
-        cy = int(round(ty + offset_dir[1] * dist_centro_flecha))
+        # Rebote rítmico de "señalar" a lo largo del eje (la punta casi toca el objetivo)
+        rebote = 22.0 * abs(math.sin(t_local * 9.0))
+        dist = (0.5 * tam) + 34.0 + rebote
+        cx = tx + cola_x * dist
+        cy = ty + cola_y * dist
 
         fw, fh = flecha_rot.size
-        pos_x = max(0, min(WIDTH - fw, cx - fw // 2))
-        pos_y = max(0, min(HEIGHT - fh, cy - fh // 2))
+        y_min = y_video_top
+        y_max = y_video_top + h_video - fh
+        pos_x = int(round(max(0, min(WIDTH - fw, cx - fw / 2.0))))
+        pos_y = int(round(max(y_min, min(y_max, cy - fh / 2.0))))
         lienzo.alpha_composite(flecha_rot, dest=(pos_x, pos_y))
 
     def dibujar_like_sub(
@@ -1505,6 +1912,44 @@ class GestorAssetsVisuales:
         pos_x = (WIDTH - ow) // 2
         pos_y = HEIGHT - oh - 140
         lienzo.alpha_composite(frame_overlay, dest=(pos_x, pos_y))
+
+    def dibujar_timer(
+        self,
+        lienzo: Image.Image,
+        activo: bool,
+        t_en_timer: float,
+        dur_timer: float,
+        es_split: bool,
+    ) -> None:
+        if not activo or not self.timer_frames:
+            return
+        if t_en_timer < 0.0 or t_en_timer > dur_timer:
+            return
+
+        total_f = len(self.timer_frames)
+        progreso = min(1.0, max(0.0, t_en_timer / max(0.1, dur_timer)))
+        idx = min(total_f - 1, int(round(progreso * (total_f - 1))))
+
+        frame_timer = self.timer_frames[idx]
+        if t_en_timer < 0.16:
+            p_in = t_en_timer / 0.16
+            escala_anim = 0.55 + 0.52 * math.sin(p_in * math.pi * 0.65)
+            nw = max(24, int(round(frame_timer.width * escala_anim)))
+            nh = max(24, int(round(frame_timer.height * escala_anim)))
+            frame_timer = frame_timer.resize((nw, nh), Image.Resampling.LANCZOS)
+        elif t_en_timer > dur_timer - 0.12:
+            p_out = max(0.0, (dur_timer - t_en_timer) / 0.12)
+            escala_anim = 0.65 + 0.35 * p_out
+            nw = max(24, int(round(frame_timer.width * escala_anim)))
+            nh = max(24, int(round(frame_timer.height * escala_anim)))
+            frame_timer = frame_timer.resize((nw, nh), Image.Resampling.LANCZOS)
+
+        ow, oh = frame_timer.size
+        cx = WIDTH // 2
+        cy = 1480 if es_split else 960
+        pos_x = max(0, min(WIDTH - ow, cx - ow // 2))
+        pos_y = max(0, min(HEIGHT - oh, cy - oh // 2))
+        lienzo.alpha_composite(frame_timer, dest=(pos_x, pos_y))
 
 
 class LectorVideoReferencia:
@@ -1601,6 +2046,366 @@ class LectorVideoReferencia:
 
 
 # ==============================================================================
+# 6b. FLECHA INTELIGENTE: DETECCIÓN DE LA ACCIÓN + SEGUIMIENTO (TRACKING) DEL OBJETIVO
+# ==============================================================================
+DURACION_FLECHA_SEG = 2.2          # Tiempo que la flecha permanece en pantalla
+UMBRAL_CORTE_ESCENA = 30.0         # Diferencia media de gris que se considera cambio de escena
+
+_ZONAS_FLECHA: Dict[str, Tuple[float, float]] = {
+    "centro": (0.50, 0.52),
+    "izquierda": (0.27, 0.52),
+    "derecha": (0.73, 0.52),
+    "arriba": (0.50, 0.30),
+    "abajo": (0.50, 0.74),
+    "arriba_izq": (0.27, 0.30),
+    "arriba_der": (0.73, 0.30),
+    "abajo_izq": (0.27, 0.74),
+    "abajo_der": (0.73, 0.74),
+}
+
+
+@dataclass
+class PlanFlecha:
+    frame_inicio: int        # Frame (dentro del segmento) en el que aparece la flecha
+    xs: np.ndarray           # X del objetivo por frame (px dentro del área de video)
+    ys: np.ndarray           # Y del objetivo por frame (px dentro del área de video)
+    cola_x: np.ndarray       # Dirección de la cola de la flecha (desde la punta hacia atrás)
+    cola_y: np.ndarray
+    descripcion: str = ""
+
+
+def _parsear_espec_flecha(espec: str) -> Dict[str, object]:
+    s = _quitar_acentos(espec.strip().lower())
+    fija = bool(re.search(r"\bfija\b|\bestatica\b|\bquieta\b", s))
+    s = re.sub(r"\b(fija|estatica|quieta|seguir|sigue|tracking)\b", "", s).strip()
+
+    parte_obj, parte_t = s, None
+    if "@" in s:
+        parte_obj, parte_t = s.split("@", 1)
+    parte_obj = parte_obj.strip()
+
+    res: Dict[str, object] = {
+        "modo": "auto", "px": None, "py": None, "es_pixel": False,
+        "zona": None, "t_abs": None, "t_rel": None, "fija": fija,
+    }
+    m = re.match(r"^(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)$", parte_obj)
+    if m:
+        res["modo"] = "punto"
+        res["px"], res["py"] = float(m.group(1)), float(m.group(2))
+        res["es_pixel"] = res["px"] > 100.0 or res["py"] > 100.0
+    elif parte_obj in _ZONAS_FLECHA:
+        res["modo"] = "zona"
+        res["zona"] = parte_obj
+
+    if parte_t:
+        pt = parte_t.strip().rstrip("s").strip()
+        if ":" in pt:
+            res["t_abs"] = _parsear_tiempo_a_segundos(pt)
+        else:
+            try:
+                res["t_rel"] = float(pt.replace(",", "."))
+            except ValueError:
+                pass
+    return res
+
+
+def _suavizar_1d(valores: np.ndarray, sigma: float) -> np.ndarray:
+    if len(valores) < 3 or sigma <= 0:
+        return valores.astype(np.float64)
+    radio = max(1, int(round(sigma * 3)))
+    xk = np.arange(-radio, radio + 1, dtype=np.float64)
+    kernel = np.exp(-(xk ** 2) / (2.0 * sigma ** 2))
+    kernel /= kernel.sum()
+    padded = np.pad(valores.astype(np.float64), (radio, radio), mode="edge")
+    return np.convolve(padded, kernel, mode="valid")
+
+
+def planificar_flecha_inteligente(
+    lector: "LectorVideoReferencia",
+    espec: str,
+    t_video_inicio_seg: float,
+    dur_seg: float,
+) -> Optional[PlanFlecha]:
+    """
+    Calcula (antes de renderizar el segmento) dónde y cuándo aparece la flecha y la
+    trayectoria del objetivo cuadro a cuadro:
+      1) Analiza el movimiento del segmento (compensando paneos de cámara) para encontrar
+         el MOMENTO de mayor acción (si el guion no fijó un segundo con '@').
+      2) Encuentra el OBJETO en movimiento (auto/zona) o ajusta el punto pedido por el guion
+         al objeto en movimiento más cercano.
+      3) Sigue al objetivo con flujo óptico Lucas-Kanade y suaviza la trayectoria.
+      4) Evita cruzar cortes de escena (la flecha nunca 'salta' a otra toma).
+    """
+    frames = lector.frames
+    if not frames or dur_seg <= 0.25:
+        return None
+    fps_v = float(lector.fps_origen)
+    H, W = frames[0].shape[:2]
+    n_frames_video = len(frames)
+    e = _parsear_espec_flecha(espec)
+
+    def idx_video(t_seg_rel: float) -> int:
+        return int(max(0, min(n_frames_video - 1, round((t_video_inicio_seg + t_seg_rel) * fps_v))))
+
+    # ---- 1. Mapa de movimiento del segmento (1/4 de resolución, ~30 análisis por segundo) ----
+    ESC = 0.25
+    sw, sh = max(16, int(W * ESC)), max(16, int(H * ESC))
+
+    def gris(idx: int, ancho: int, alto: int) -> np.ndarray:
+        g = cv2.cvtColor(cv2.resize(frames[idx], (ancho, alto), interpolation=cv2.INTER_AREA), cv2.COLOR_RGB2GRAY)
+        return g
+
+    paso_t = 1.0 / 30.0
+    t_list = np.arange(0.0, dur_seg, paso_t)
+    if len(t_list) < 3:
+        t_list = np.array([0.0, dur_seg * 0.5, max(0.0, dur_seg - 0.01)])
+    grises = [cv2.GaussianBlur(gris(idx_video(t), sw, sh), (3, 3), 0).astype(np.float32) for t in t_list]
+
+    mapas: List[np.ndarray] = []
+    cortes: List[bool] = []
+    energia: List[float] = []
+    for a, b in zip(grises[:-1], grises[1:]):
+        if float(np.mean(np.abs(a - b))) > UMBRAL_CORTE_ESCENA:
+            mapas.append(np.zeros_like(a))
+            cortes.append(True)
+            energia.append(0.0)
+            continue
+        try:
+            (sx, sy), _resp = cv2.phaseCorrelate(a, b)
+        except cv2.error:
+            sx, sy = 0.0, 0.0
+        if abs(sx) > sw * 0.25 or abs(sy) > sh * 0.25:
+            sx, sy = 0.0, 0.0
+        M = np.float32([[1, 0, sx], [0, 1, sy]])
+        a_alineado = cv2.warpAffine(a, M, (sw, sh), borderMode=cv2.BORDER_REPLICATE)
+        d = np.abs(b - a_alineado)
+        d = np.maximum(0.0, d - float(np.median(d)) - 4.0)
+        margen = int(max(abs(sx), abs(sy))) + 2
+        d[:margen, :] = 0
+        d[-margen:, :] = 0
+        d[:, :margen] = 0
+        d[:, -margen:] = 0
+        mapas.append(d)
+        cortes.append(False)
+        energia.append(float(d.sum()))
+    t_pares = t_list[1:]
+    energia_np = np.array(energia, dtype=np.float64)
+
+    # ---- 2. Ventana temporal de la flecha (siempre dentro de UNA sola toma, sin cruzar cortes) ----
+    MIN_VISIBLE = 0.8
+    tiempos_corte = [float(t_p) for t_p, es_c in zip(t_pares, cortes) if es_c]
+    limites = [0.0] + tiempos_corte + [dur_seg]
+    tomas = [(limites[i], limites[i + 1]) for i in range(len(limites) - 1) if limites[i + 1] - limites[i] > 0.05]
+    if not tomas:
+        tomas = [(0.0, dur_seg)]
+
+    def toma_de(t: float) -> Tuple[float, float]:
+        for (a_t, b_t) in tomas:
+            if a_t <= t < b_t:
+                return a_t, b_t
+        return tomas[-1]
+
+    L_max = min(DURACION_FLECHA_SEG, max(0.5, dur_seg - 0.1))
+    origen_tiempo = "auto (momento de mayor acción)"
+    t_pedido: Optional[float] = None
+    if e["t_abs"] is not None:
+        t_pedido = float(e["t_abs"]) - t_video_inicio_seg
+        origen_tiempo = f"guion @{float(e['t_abs']):.2f}s del video"
+    elif e["t_rel"] is not None:
+        t_pedido = float(e["t_rel"])
+        origen_tiempo = f"guion +{float(e['t_rel']):.2f}s del segmento"
+
+    if t_pedido is not None:
+        t_pedido = max(0.05, min(dur_seg - 0.3, t_pedido))
+        a_t, b_t = toma_de(t_pedido)
+        t0 = max(t_pedido, a_t + 0.03)
+        if b_t - t0 < MIN_VISIBLE:
+            if b_t - a_t >= MIN_VISIBLE:
+                t0 = max(a_t + 0.03, b_t - MIN_VISIBLE)   # Adelantar dentro de la misma toma
+            else:
+                # Toma demasiado corta: usar la toma siguiente (o la anterior si es la última)
+                idx_t = tomas.index((a_t, b_t))
+                alternativa = tomas[idx_t + 1] if idx_t + 1 < len(tomas) else (tomas[idx_t - 1] if idx_t > 0 else (a_t, b_t))
+                a_t, b_t = alternativa
+                t0 = a_t + 0.03
+        L = max(0.3, min(L_max, b_t - t0 - paso_t))
+    else:
+        mejor = (0.05, L_max, -1.0)
+        hay_tomas_largas = any((b_t - a_t) >= MIN_VISIBLE + 0.1 for (a_t, b_t) in tomas)
+        for (a_t, b_t) in tomas:
+            largo_toma = b_t - a_t
+            if largo_toma < 0.35 or (hay_tomas_largas and largo_toma < MIN_VISIBLE + 0.1):
+                continue
+            for t_cand in np.arange(a_t + 0.03, max(a_t + 0.04, b_t - min(MIN_VISIBLE, largo_toma) + 1e-6), paso_t):
+                L_c = min(L_max, b_t - t_cand - paso_t)
+                if L_c < min(MIN_VISIBLE, largo_toma * 0.9):
+                    continue
+                dentro = (t_pares > t_cand) & (t_pares <= t_cand + L_c)
+                if not np.any(dentro):
+                    continue
+                # Energía media de acción * factor de legibilidad (la flecha debe verse ~1.6s o más)
+                score = float(energia_np[dentro].mean()) * min(1.0, L_c / 1.6)
+                if score > mejor[2]:
+                    mejor = (float(t_cand), float(L_c), score)
+        t0, L, _ = mejor
+        if mejor[2] < 0:
+            a_t, b_t = max(tomas, key=lambda tb: tb[1] - tb[0])
+            t0, L = a_t + 0.03, max(0.3, min(L_max, b_t - a_t - 0.05))
+
+    # ---- 3. Selección del objetivo inicial ----
+    dentro_ini = (t_pares > t0) & (t_pares <= t0 + min(0.6, L))
+    acc = np.zeros((sh, sw), dtype=np.float32)
+    n_usados = 0
+    for m_d, ok in zip(mapas, dentro_ini):
+        if ok:
+            acc += m_d
+            n_usados += 1
+    acc = cv2.GaussianBlur(acc, (0, 0), 4.0)
+    yy, xx = np.mgrid[0:sh, 0:sw].astype(np.float32)
+    hay_movimiento = float(acc.max()) > 3.0 * max(1, n_usados)
+
+    def peso_gauss(cx: float, cy: float, sigma_px: float) -> np.ndarray:
+        return np.exp(-(((xx - cx) ** 2) + ((yy - cy) ** 2)) / (2.0 * sigma_px ** 2))
+
+    modo = str(e["modo"])
+    if modo == "punto":
+        if e["es_pixel"]:
+            px_n, py_n = float(e["px"]) / W, float(e["py"]) / H
+        else:
+            px_n, py_n = float(e["px"]) / 100.0, float(e["py"]) / 100.0
+        px_n, py_n = min(0.98, max(0.02, px_n)), min(0.98, max(0.02, py_n))
+        x0_n, y0_n = px_n, py_n
+        if hay_movimiento and not e["fija"]:
+            ponderado = acc * peso_gauss(px_n * sw, py_n * sh, 0.10 * sw)
+            if float(ponderado.max()) > 0.25 * float(acc.max()):
+                iy, ix = np.unravel_index(int(np.argmax(ponderado)), ponderado.shape)
+                x0_n, y0_n = (ix + 0.5) / sw, (iy + 0.5) / sh
+    else:
+        zona = str(e["zona"] or "centro")
+        zx, zy = _ZONAS_FLECHA.get(zona, _ZONAS_FLECHA["centro"])
+        sigma_rel = 0.24 if modo == "zona" else 0.45
+        x0_n, y0_n = zx, zy
+        if hay_movimiento:
+            ponderado = acc * peso_gauss(zx * sw, zy * sh, sigma_rel * sw)
+            # Evitar bordes extremos (marcas de agua / interfaz)
+            ponderado[: int(sh * 0.06), :] = 0
+            ponderado[int(sh * 0.94):, :] = 0
+            iy, ix = np.unravel_index(int(np.argmax(ponderado)), ponderado.shape)
+            x0_n, y0_n = (ix + 0.5) / sw, (iy + 0.5) / sh
+
+    # ---- 4. Seguimiento cuadro a cuadro con flujo óptico (1/2 resolución) ----
+    n_out = max(2, int(round(L * FPS)))
+    ESC_T = 0.5
+    tw, th = max(16, int(W * ESC_T)), max(16, int(H * ESC_T))
+    radio = max(18.0, 0.045 * tw)
+    pt = np.array([x0_n * tw, y0_n * th], dtype=np.float32)
+
+    def detectar_puntos(g: np.ndarray, centro: np.ndarray) -> Optional[np.ndarray]:
+        mascara = np.zeros_like(g)
+        cv2.circle(mascara, (int(centro[0]), int(centro[1])), int(radio), 255, -1)
+        return cv2.goodFeaturesToTrack(g, maxCorners=40, qualityLevel=0.01, minDistance=3, mask=mascara)
+
+    idx_prev = idx_video(t0)
+    g_prev = gris(idx_prev, tw, th)
+    puntos = None if e["fija"] else detectar_puntos(g_prev, pt)
+    seguimiento_activo = not bool(e["fija"])
+    atraer_a_movimiento = seguimiento_activo
+    fuerza_atraccion = 0.06 if modo in ("auto", "zona") else 0.035
+
+    xs_l: List[float] = []
+    ys_l: List[float] = []
+    for k in range(n_out):
+        t_rel = t0 + k / float(FPS)
+        idx = idx_video(t_rel)
+        if seguimiento_activo and idx != idx_prev:
+            g = gris(idx, tw, th)
+            if float(np.mean(np.abs(g.astype(np.int16) - g_prev.astype(np.int16)))) > UMBRAL_CORTE_ESCENA:
+                seguimiento_activo = False  # Corte de escena: congelar posición
+            else:
+                if puntos is not None and len(puntos) > 0:
+                    nuevos, estado, _err = cv2.calcOpticalFlowPyrLK(
+                        g_prev, g, puntos, None, winSize=(21, 21), maxLevel=3,
+                        criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 20, 0.03),
+                    )
+                    if nuevos is not None and estado is not None:
+                        ok = estado.reshape(-1) == 1
+                        if int(ok.sum()) >= 3:
+                            vec = (nuevos[ok] - puntos[ok]).reshape(-1, 2)
+                            # Separar movimiento de cámara (paneo global) del movimiento propio del objeto
+                            try:
+                                (gsx, gsy), _r = cv2.phaseCorrelate(g_prev.astype(np.float32), g.astype(np.float32))
+                            except cv2.error:
+                                gsx, gsy = 0.0, 0.0
+                            rel = np.linalg.norm(vec - np.array([gsx, gsy], dtype=np.float32), axis=1)
+                            propios = rel > 1.2
+                            if int(propios.sum()) >= 3 and float(propios.mean()) >= 0.2:
+                                desp = np.median(vec[propios], axis=0)
+                            else:
+                                desp = np.median(vec, axis=0)
+                            pt = pt + desp.astype(np.float32)
+                            # Conservar solo los puntos que se mueven igual que el objetivo
+                            coherentes = np.linalg.norm(vec - desp, axis=1) < 2.5
+                            puntos = nuevos[ok].reshape(-1, 2)[coherentes].reshape(-1, 1, 2)
+                            dist = np.linalg.norm(puntos.reshape(-1, 2) - pt, axis=1)
+                            puntos = puntos[dist < radio * 1.8].reshape(-1, 1, 2)
+                        else:
+                            puntos = None
+
+                # Atraer suavemente el objetivo hacia el movimiento real cercano (cámara compensada)
+                if atraer_a_movimiento and len(mapas) > 0:
+                    ip = int(np.argmin(np.abs(t_pares - t_rel)))
+                    mp = mapas[ip]
+                    cxq, cyq = pt[0] * (sw / tw), pt[1] * (sh / th)
+                    rq = radio * (sw / tw) * 2.2
+                    x1, x2 = int(max(0, cxq - rq)), int(min(sw, cxq + rq))
+                    y1, y2 = int(max(0, cyq - rq)), int(min(sh, cyq + rq))
+                    if x2 > x1 and y2 > y1:
+                        ventana = mp[y1:y2, x1:x2]
+                        masa = float(ventana.sum())
+                        if masa > 60.0:
+                            vy_idx, vx_idx = np.mgrid[y1:y2, x1:x2]
+                            mx = float((ventana * vx_idx).sum() / masa) * (tw / sw)
+                            my = float((ventana * vy_idx).sum() / masa) * (th / sh)
+                            pt = pt + fuerza_atraccion * (np.array([mx, my], dtype=np.float32) - pt)
+
+                if puntos is None or len(puntos) < 6:
+                    puntos = detectar_puntos(g, pt)
+                g_prev = g
+            idx_prev = idx
+
+        pt[0] = float(min(tw - 4, max(4, pt[0])))
+        pt[1] = float(min(th - 4, max(4, pt[1])))
+        xs_l.append(float(pt[0]) / ESC_T)
+        ys_l.append(float(pt[1]) / ESC_T)
+
+    xs = _suavizar_1d(np.array(xs_l), 5.0)
+    ys = _suavizar_1d(np.array(ys_l), 5.0)
+    margen_px = 30.0
+    xs = np.clip(xs, margen_px, W - margen_px)
+    ys = np.clip(ys, margen_px, H - margen_px)
+
+    # ---- 5. Orientación: la flecha se ubica del lado con más espacio (estable, sin girar loca) ----
+    mx_med, my_med = float(np.median(xs)), float(np.median(ys))
+    hx = float(np.clip((W * 0.5 - mx_med) / (W * 0.15), -1.0, 1.0))
+    vy = -0.65 if my_med > H * 0.33 else 0.65   # Arriba del objetivo, salvo que esté muy arriba
+    if abs(hx) < 0.25:
+        hx = 0.35 if mx_med < W * 0.5 else -0.35
+    norma = math.hypot(hx, vy) or 1.0
+    cola_x = np.full(len(xs), hx / norma)
+    cola_y = np.full(len(xs), vy / norma)
+
+    desc = (
+        f"modo={modo}{' (fija)' if e['fija'] else ' + seguimiento'} | aparece {t_video_inicio_seg + t0:.2f}s "
+        f"del video ({origen_tiempo}) | dura {L:.2f}s | objetivo inicial ({x0_n * 100:.0f}%, {y0_n * 100:.0f}%)"
+    )
+    return PlanFlecha(
+        frame_inicio=int(round(t0 * FPS)),
+        xs=xs, ys=ys, cola_x=cola_x, cola_y=cola_y,
+        descripcion=desc,
+    )
+
+
+# ==============================================================================
 # 7. UTILIDADES DE AUDIO, SFX Y RENDERIZADO PRINCIPAL
 # ==============================================================================
 def preparar_assets_base() -> None:
@@ -1638,15 +2443,85 @@ def calcular_envolvente_rms(ruta_wav: Path, fps: int) -> np.ndarray:
     return rms_por_frame
 
 
-def _resolver_ruta_sfx(nombre_sfx: Optional[str]) -> Optional[Path]:
-    if not nombre_sfx or not SFX_DIR.exists():
-        return None
-    objetivo = _quitar_acentos(nombre_sfx.strip().lower())
-    for archivo in SFX_DIR.glob("*.*"):
-        if archivo.suffix.lower() in (".wav", ".mp3", ".ogg"):
-            if _quitar_acentos(archivo.stem.strip().lower()) == objetivo:
-                return archivo
-    return None
+class GestorAudioSFX:
+    """
+    Carga y decodifica todos los sonidos de `assets/sfx` (.mp3, .wav, .ogg) a PCM 44.1kHz mono,
+    recorta silencios muertos al inicio/final y normaliza el pico para una mezcla limpia.
+    Soporta combinaciones múltiples separadas por `+` (ej. `punch+cartoon_laugh`).
+    """
+
+    def __init__(self, sfx_dir: Path, sr: int = 44100):
+        self.sfx_dir = sfx_dir
+        self.sr = sr
+        self.cache_pcm: Dict[str, np.ndarray] = {}
+        self.mapa_archivos: Dict[str, Path] = {}
+        self._indexar_directorio()
+
+    def _indexar_directorio(self) -> None:
+        if not self.sfx_dir.exists():
+            return
+        # Preferir .mp3/.ogg o .wav según disponibilidad; si hay duplicados, priorizar el archivo más reciente/completo
+        for archivo in sorted(self.sfx_dir.glob("*.*")):
+            if archivo.suffix.lower() in (".wav", ".mp3", ".ogg"):
+                clave = _quitar_acentos(archivo.stem.strip().lower()).replace(" ", "_").replace("-", "_")
+                if clave not in self.mapa_archivos or archivo.suffix.lower() == ".mp3":
+                    self.mapa_archivos[clave] = archivo
+
+    def obtener_pcm(self, nombre_sfx: Optional[str], max_dur_seg: float = 3.2) -> Optional[np.ndarray]:
+        if not nombre_sfx:
+            return None
+        clave_norm = _normalizar_sfx(nombre_sfx) or _quitar_acentos(nombre_sfx.strip().lower()).replace(" ", "_")
+        if "+" in clave_norm:
+            clave_norm = clave_norm.split("+")[0]
+
+        if clave_norm not in self.cache_pcm:
+            ruta = self.mapa_archivos.get(clave_norm)
+            if ruta is None or not ruta.exists():
+                return None
+            try:
+                res = subprocess.run(
+                    [
+                        "ffmpeg", "-v", "error",
+                        "-i", str(ruta),
+                        "-f", "s16le", "-ac", "1", "-ar", str(self.sr),
+                        "-",
+                    ],
+                    capture_output=True,
+                    check=False,
+                )
+                if res.returncode != 0 or not res.stdout:
+                    return None
+                pcm = np.frombuffer(res.stdout, dtype=np.int16).astype(np.float32) / 32768.0
+                if len(pcm) == 0:
+                    return None
+
+                # Recortar silencio inicial/final para que el impacto suene a tiempo
+                abs_pcm = np.abs(pcm)
+                pico = float(np.max(abs_pcm))
+                if pico > 1e-4:
+                    idx_activos = np.where(abs_pcm > max(0.004, pico * 0.025))[0]
+                    if len(idx_activos) > 0:
+                        i0 = max(0, int(idx_activos[0]) - int(self.sr * 0.008))
+                        i1 = min(len(pcm), int(idx_activos[-1]) + int(self.sr * 0.025))
+                        pcm = pcm[i0:i1]
+                    pcm = (pcm / pico) * 0.85
+
+                self.cache_pcm[clave_norm] = pcm.astype(np.float32)
+            except Exception:
+                return None
+
+        pcm_base = self.cache_pcm.get(clave_norm)
+        if pcm_base is None or len(pcm_base) == 0:
+            return None
+
+        max_samples = int(round(max_dur_seg * self.sr))
+        if len(pcm_base) > max_samples > 0:
+            recorte = pcm_base[:max_samples].copy()
+            fade_n = min(int(self.sr * 0.04), len(recorte) // 4)
+            if fade_n > 1:
+                recorte[-fade_n:] *= np.linspace(1.0, 0.0, fade_n, dtype=np.float32)
+            return recorte
+        return pcm_base
 
 
 def mezclar_voz_sfx_y_likesub(
@@ -1656,27 +2531,69 @@ def mezclar_voz_sfx_y_likesub(
     incluir_audio_likesub: bool,
     likesub_audio_pcm: Optional[np.ndarray],
     ruta_salida_wav: Path,
+    gestor_sfx: Optional[GestorAudioSFX] = None,
+    tiene_emoji: bool = False,
+    tiene_flecha: bool = False,
+    incluir_timer: bool = False,
+    t_inicio_timer_seg: float = 0.0,
+    dur_timer_seg: float = DURACION_TIMER_SEG,
+    timer_audio_pcm: Optional[np.ndarray] = None,
 ) -> None:
     sr = 44100
-    n_total = int(round(duracion_total_seg * sr))
+    n_total = max(1, int(round(duracion_total_seg * sr)))
     mezcla = np.zeros(n_total, dtype=np.float32)
 
     with wave.open(str(ruta_voz_wav), "r") as wf:
         voz_pcm = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16).astype(np.float32) / 32768.0
         n_copy = min(n_total, len(voz_pcm))
-        # Amplificar la voz con saturación suave para que suene fuerte sin distorsionar
-        voz_fuerte = np.tanh(voz_pcm[:n_copy] * VOLUMEN_VOZ_YOUTUBER)
-        mezcla[:n_copy] += voz_fuerte
+        if n_copy > 0:
+            voz_fuerte = np.tanh(voz_pcm[:n_copy] * VOLUMEN_VOZ_YOUTUBER)
+            fade_out = min(int(sr * 0.015), n_copy // 4)
+            if fade_out > 1:
+                voz_fuerte[-fade_out:] *= np.linspace(1.0, 0.0, fade_out, dtype=np.float32)
+            mezcla[:n_copy] += voz_fuerte
 
-    ruta_sfx = _resolver_ruta_sfx(nombre_sfx)
-    if ruta_sfx and ruta_sfx.exists():
-        try:
-            with wave.open(str(ruta_sfx), "r") as wf_s:
-                sfx_pcm = np.frombuffer(wf_s.readframes(wf_s.getnframes()), dtype=np.int16).astype(np.float32) / 32768.0
-                n_sfx = min(n_total, len(sfx_pcm))
-                mezcla[:n_sfx] += sfx_pcm[:n_sfx] * 0.36
-        except Exception:
-            pass
+    if gestor_sfx is not None:
+        lista_sfx = _desglosar_sfx_lista(nombre_sfx)
+        if incluir_timer:
+            lista_sfx = [s for s in lista_sfx if s != "tictac"]
+
+        # Soporta 1 o más SFX por segmento (ej. `punch+cartoon_laugh` escalonados)
+        for idx_s, sfx_item in enumerate(lista_sfx):
+            offset_seg = 0.0 if idx_s == 0 else min(max(0.18, duracion_total_seg * 0.36), max(0.0, duracion_total_seg - 0.45))
+            idx_ini_s = max(0, min(n_total, int(round(offset_seg * sr))))
+            n_disp_s = n_total - idx_ini_s
+            if n_disp_s <= 0:
+                continue
+            sfx_pcm = gestor_sfx.obtener_pcm(sfx_item, max_dur_seg=min(2.6, max(0.5, duracion_total_seg * 0.80)))
+            if sfx_pcm is not None and len(sfx_pcm) > 0:
+                n_s = min(n_disp_s, len(sfx_pcm))
+                ganancia = 0.30 if idx_s == 0 else 0.26
+                mezcla[idx_ini_s : idx_ini_s + n_s] += sfx_pcm[:n_s] * ganancia
+
+        # Pop sutil automático al aparecer un emoji o flecha si no estaba ya en la lista
+        if (tiene_emoji or tiene_flecha) and "pop" not in lista_sfx:
+            pop_pcm = gestor_sfx.obtener_pcm("pop", max_dur_seg=0.45)
+            if pop_pcm is not None and len(pop_pcm) > 0:
+                idx_pop = min(n_total, int(round(0.06 * sr)))
+                n_pop = min(n_total - idx_pop, len(pop_pcm))
+                if n_pop > 0:
+                    mezcla[idx_pop : idx_pop + n_pop] += pop_pcm[:n_pop] * 0.16
+
+    if incluir_timer:
+        idx_ini_t = max(0, min(n_total, int(round(t_inicio_timer_seg * sr))))
+        n_disp = n_total - idx_ini_t
+        if n_disp > 0:
+            if timer_audio_pcm is not None and len(timer_audio_pcm) > 0:
+                n_t = min(n_disp, len(timer_audio_pcm))
+                mezcla[idx_ini_t : idx_ini_t + n_t] += timer_audio_pcm[:n_t] * 0.92
+            elif gestor_sfx is not None:
+                tt_pcm = gestor_sfx.obtener_pcm("tictac", max_dur_seg=dur_timer_seg)
+                if tt_pcm is not None and len(tt_pcm) > 0:
+                    n_target = min(n_disp, int(round(dur_timer_seg * sr)))
+                    reps = int(math.ceil(n_target / float(len(tt_pcm))))
+                    tt_rep = np.tile(tt_pcm, reps)[:n_target]
+                    mezcla[idx_ini_t : idx_ini_t + n_target] += tt_rep * 0.45
 
     if incluir_audio_likesub and likesub_audio_pcm is not None and len(likesub_audio_pcm) > 0:
         n_ls = min(n_total, len(likesub_audio_pcm))
@@ -1701,9 +2618,62 @@ def detectar_encoder_nvidia() -> str:
     return "libx264"
 
 
+def _asignar_tiempos_reales_segmentos(
+    segmentos: List[SegmentoVideoGuion],
+    dur_video_origen: float,
+) -> List[Tuple[int, float]]:
+    """
+    Garantiza que los segmentos cubran de forma continua de `0.0` a `dur_video_origen`
+    sin huecos mudos y que la suma de frames coincida al frame exacto con el video original.
+    """
+    n_seg = len(segmentos)
+    total_frames_video = max(1, int(round(dur_video_origen * FPS)))
+    if n_seg == 0:
+        return []
+
+    pesos: List[float] = []
+    for seg in segmentos:
+        if seg.t_inicio_video is not None and seg.t_fin_video is not None and seg.t_fin_video > seg.t_inicio_video:
+            t_ini = min(dur_video_origen, max(0.0, seg.t_inicio_video))
+            t_fin = min(dur_video_origen, max(t_ini + 0.25, seg.t_fin_video))
+            pesos.append(max(0.4, t_fin - t_ini))
+        else:
+            n_pal = max(3, len(seg.texto_voz.split()))
+            extra_t = seg.duracion_timer_seg if seg.mostrar_timer else 0.0
+            pesos.append(max(1.2, (n_pal / 3.5) + extra_t))
+
+    suma_pesos = max(0.1, sum(pesos))
+    frames_asignados: List[int] = []
+    acumulado = 0
+    for i, p in enumerate(pesos):
+        if i == n_seg - 1:
+            f_seg = max(1, total_frames_video - acumulado)
+        else:
+            f_seg = max(1, int(round((p / suma_pesos) * total_frames_video)))
+            if acumulado + f_seg >= total_frames_video:
+                f_seg = max(1, total_frames_video - acumulado - (n_seg - 1 - i))
+        frames_asignados.append(f_seg)
+        acumulado += f_seg
+
+    diff = total_frames_video - sum(frames_asignados)
+    if diff != 0:
+        frames_asignados[-1] = max(1, frames_asignados[-1] + diff)
+
+    cursor_t = 0.0
+    resultado: List[Tuple[int, float]] = []
+    for seg, f_seg in zip(segmentos, frames_asignados):
+        dur_seg = f_seg / float(FPS)
+        seg.t_inicio_video = cursor_t
+        seg.t_fin_video = min(dur_video_origen, cursor_t + dur_seg)
+        cursor_t += dur_seg
+        resultado.append((f_seg, dur_seg))
+
+    return resultado
+
+
 async def editar_video_con_guion(ruta_video: Path, ruta_guion: Path) -> Path:
     print("=" * 74)
-    print(" MR NUBSITO STUDIO v4.0 - EDICIÓN ESCALABLE CON ASSETS Y VOZ IA")
+    print(" MR NUBSITO STUDIO v4.3 - SINCRONIZACIÓN CONTINUA 1:1 + SFX COMPLETOS")
     print("=" * 74)
 
     preparar_assets_base()
@@ -1716,23 +2686,42 @@ async def editar_video_con_guion(ruta_video: Path, ruta_guion: Path) -> Path:
 
     lector_video = LectorVideoReferencia(ruta_video, WIDTH, alto_video)
     motor_personaje = MotorPersonajeMrNubsitoV2(ASSETS_DIR / "mr_nubsito_base.png", GESTOS_DIR) if es_split else None
-    gestor_assets = GestorAssetsVisuales(EMOJIS_DIR, LIKE_SUB_PATH)
+    gestor_assets = GestorAssetsVisuales(EMOJIS_DIR, LIKE_SUB_PATH, TIMER_PATH)
+    gestor_sfx = GestorAudioSFX(SFX_DIR)
+
+    dur_video_input = float(lector_video.duracion_total)
+    tiempos_segmentos = _asignar_tiempos_reales_segmentos(config.segmentos, dur_video_input)
 
     datos_segmentos = []
     archivos_audio_seg: List[Path] = []
 
-    # 1. Generar todas las voces, timestamps MrBeast y mezcla de SFX por segmento
-    for idx, seg in enumerate(config.segmentos):
+    # 1. Generar todas las voces ajustadas al tramo exacto de cada escena, sin huecos ni cortes de última palabra
+    for idx, (seg, (total_frames_seg, dur_seg_exacta)) in enumerate(zip(config.segmentos, tiempos_segmentos)):
+        if seg.mostrar_timer:
+            dur_timer = min(seg.duracion_timer_seg, max(0.8, dur_seg_exacta - 1.1))
+            dur_voz_objetivo = max(0.6, dur_seg_exacta - dur_timer - 0.08)
+        else:
+            dur_timer = 0.0
+            dur_voz_objetivo = dur_seg_exacta
+
         info_assets = (
+            f"{seg.t_inicio_video:.1f}s-{seg.t_fin_video:.1f}s ({dur_seg_exacta:.2f}s) | "
             f"gesto={seg.gesto_personaje} | sfx={seg.sfx_inicio or '-'} | "
-            f"emoji={seg.emoji or '-'} | flecha={seg.flecha or '-'} | like&sub={'Sí' if seg.mostrar_like_sub else 'No'}"
+            f"emoji={seg.emoji or '-'} | flecha={seg.flecha or '-'} | "
+            f"timer={f'Sí({dur_timer:.1f}s)' if seg.mostrar_timer else 'No'}"
         )
         print(f"[+] Segmento [{idx + 1}/{len(config.segmentos)}] ({info_assets}): {seg.texto_voz}")
         ruta_mp3 = TEMP_DIR / f"{seg.id_segmento}.mp3"
-        dur_voz, palabras_sub, ini_voz, fin_voz = await generar_voz_y_timestamps_segmento(seg.texto_voz, ruta_mp3)
+        dur_voz, palabras_sub, ini_voz, fin_voz = await generar_voz_y_timestamps_segmento(
+            seg.texto_voz,
+            ruta_mp3,
+            dur_objetivo_seg=dur_voz_objetivo,
+        )
 
-        total_frames_seg = max(1, int(round((dur_voz + seg.pausa_idle_final_seg) * FPS)))
-        dur_seg_exacta = total_frames_seg / float(FPS)
+        if seg.mostrar_timer:
+            t_ini_timer: Optional[float] = min(max(0.3, dur_voz + 0.05), max(0.3, dur_seg_exacta - dur_timer))
+        else:
+            t_ini_timer = None
 
         ruta_voz_wav = ruta_mp3.with_suffix(".wav")
         rms_env = calcular_envolvente_rms(ruta_voz_wav, FPS)
@@ -1745,36 +2734,45 @@ async def editar_video_con_guion(ruta_video: Path, ruta_guion: Path) -> Path:
             incluir_audio_likesub=seg.mostrar_like_sub,
             likesub_audio_pcm=gestor_assets.likesub_audio_pcm,
             ruta_salida_wav=ruta_mix_wav,
+            gestor_sfx=gestor_sfx,
+            tiene_emoji=bool(seg.emoji),
+            tiene_flecha=bool(seg.flecha),
+            incluir_timer=seg.mostrar_timer,
+            t_inicio_timer_seg=t_ini_timer or 0.0,
+            dur_timer_seg=dur_timer,
+            timer_audio_pcm=gestor_assets.timer_audio_pcm,
         )
         archivos_audio_seg.append(ruta_mix_wav)
 
-        datos_segmentos.append([seg, total_frames_seg, dur_seg_exacta, palabras_sub, rms_env, ini_voz, fin_voz])
+        datos_segmentos.append(
+            [seg, total_frames_seg, dur_seg_exacta, palabras_sub, rms_env, ini_voz, fin_voz, t_ini_timer, dur_timer]
+        )
 
-    # 2. Repartir automáticamente los tiempos del video de entrada para segmentos con tiempo 'auto'
     dur_total_locucion = sum(item[2] for item in datos_segmentos)
-    cursor_tiempo_loc = 0.0
-    for item in datos_segmentos:
-        seg: SegmentoVideoGuion = item[0]
-        dur_seg = item[2]
-        if seg.t_inicio_video is None or seg.t_fin_video is None:
-            frac_ini = cursor_tiempo_loc / max(0.1, dur_total_locucion)
-            frac_fin = (cursor_tiempo_loc + dur_seg) / max(0.1, dur_total_locucion)
-            seg.t_inicio_video = frac_ini * lector_video.duracion_total
-            seg.t_fin_video = frac_fin * lector_video.duracion_total
-        cursor_tiempo_loc += dur_seg
+    print(f"[*] Duración video original: {dur_video_input:.2f}s | Duración sincronizada total: {dur_total_locucion:.2f}s")
 
-    # 3. Unir el audio maestro de la voz + audio original del video de fondo
+    # 2. Unir el audio maestro de la voz + SFX + audio original del video de fondo con duración exacta
     ruta_voz_maestra = TEMP_DIR / "voz_maestra.wav"
     bloques_pcm = []
     for ruta_w in archivos_audio_seg:
         with wave.open(str(ruta_w), "r") as wf:
             bloques_pcm.append(wf.readframes(wf.getnframes()))
+
     with wave.open(str(ruta_voz_maestra), "w") as wf_master:
         wf_master.setnchannels(1)
         wf_master.setsampwidth(2)
         wf_master.setframerate(44100)
+        bytes_target = int(round(dur_video_input * 44100)) * 2
+        bytes_escritos = 0
         for b in bloques_pcm:
+            if bytes_escritos + len(b) > bytes_target:
+                b = b[: bytes_target - bytes_escritos]
             wf_master.writeframes(b)
+            bytes_escritos += len(b)
+            if bytes_escritos >= bytes_target:
+                break
+        if bytes_escritos < bytes_target:
+            wf_master.writeframes(b"\x00" * (bytes_target - bytes_escritos))
 
     ruta_audio_final = TEMP_DIR / "audio_final_combinado.wav"
     if config.volumen_video_original > 0.001:
@@ -1782,10 +2780,12 @@ async def editar_video_con_guion(ruta_video: Path, ruta_guion: Path) -> Path:
             [
                 "ffmpeg", "-y",
                 "-i", str(ruta_voz_maestra),
-                "-stream_loop", "-1", "-i", str(ruta_video),
+                "-t", f"{dur_video_input:.3f}",
+                "-i", str(ruta_video),
                 "-filter_complex",
                 f"[1:a]volume={config.volumen_video_original}[bg];[0:a][bg]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.98:level=disabled[aout]",
                 "-map", "[aout]",
+                "-t", f"{dur_video_input:.3f}",
                 "-ar", "44100", "-ac", "1",
                 str(ruta_audio_final),
             ],
@@ -1798,7 +2798,7 @@ async def editar_video_con_guion(ruta_video: Path, ruta_guion: Path) -> Path:
     else:
         ruta_audio_final = ruta_voz_maestra
 
-    # 4. Renderizar video final con FFmpeg usando el título del guión como nombre de archivo
+    # 3. Renderizar video final con FFmpeg usando TITULO_SUPERIOR exclusivamente para el nombre del archivo .mp4
     if config.titulo_superior:
         titulo_limpio = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", config.titulo_superior).strip().rstrip(".")
         nombre_out = titulo_limpio or config.archivo_salida or f"editado_{ruta_video.stem}.mp4"
@@ -1809,7 +2809,7 @@ async def editar_video_con_guion(ruta_video: Path, ruta_guion: Path) -> Path:
         nombre_out += ".mp4"
     ruta_mp4_final = OUTPUT_DIR / nombre_out
     encoder = detectar_encoder_nvidia()
-    print(f"[*] Renderizando con {encoder} ({WIDTH}x{HEIGHT} a {FPS} FPS | Modo: {config.modo_pantalla.upper()})...")
+    print(f"[*] Renderizando con {encoder} ({WIDTH}x{HEIGHT} a {FPS} FPS | Duración: {dur_video_input:.2f}s | Archivo: {nombre_out})...")
 
     if encoder == "h264_nvenc":
         args_codec = ["-c:v", "h264_nvenc", "-preset", "p4", "-b:v", "12M", "-pix_fmt", "yuv420p"]
@@ -1828,7 +2828,7 @@ async def editar_video_con_guion(ruta_video: Path, ruta_guion: Path) -> Path:
         *args_codec,
         "-c:a", "aac",
         "-b:a", "192k",
-        "-shortest",
+        "-t", f"{dur_video_input:.3f}",
         str(ruta_mp4_final),
     ]
 
@@ -1836,24 +2836,51 @@ async def editar_video_con_guion(ruta_video: Path, ruta_guion: Path) -> Path:
 
     tiempo_global = 0.0
 
-    for seg, total_frames_seg, dur_seg_exacta, palabras_sub, rms_env, ini_voz, fin_voz in datos_segmentos:
-        t_vid_ini = float(seg.t_inicio_video or 0.0)
-        t_vid_fin = float(seg.t_fin_video or lector_video.duracion_total)
+    for seg, total_frames_seg, dur_seg_exacta, palabras_sub, rms_env, ini_voz, fin_voz, t_ini_timer, dur_timer in datos_segmentos:
+        dur_hablada_seg = float(t_ini_timer) if (seg.mostrar_timer and t_ini_timer is not None) else dur_seg_exacta
+
+        # Flecha inteligente (máx. 1 por video): se planifica una vez al inicio del segmento
+        plan_flecha: Optional[PlanFlecha] = None
+        if seg.flecha and gestor_assets.flecha_base is not None:
+            t_vid_ini_seg = tiempo_global
+            try:
+                plan_flecha = planificar_flecha_inteligente(lector_video, seg.flecha, t_vid_ini_seg, dur_hablada_seg)
+                if plan_flecha is not None:
+                    print(f"[*] Flecha inteligente: {plan_flecha.descripcion}")
+            except Exception as exc_flecha:
+                print(f"[!] No se pudo planificar la flecha ({exc_flecha}); se omite.")
+                plan_flecha = None
 
         for f_idx in range(total_frames_seg):
             t_seg = f_idx / float(FPS)
-            progreso = f_idx / float(max(1, total_frames_seg - 1))
             rms_val = float(rms_env[f_idx]) if f_idx < len(rms_env) else 0.0
             esta_hablando = (ini_voz <= t_seg <= fin_voz) and (rms_val > 0.008)
 
-            t_video_actual = t_vid_ini + progreso * (t_vid_fin - t_vid_ini)
+            en_timer = bool(
+                seg.mostrar_timer
+                and t_ini_timer is not None
+                and (t_ini_timer <= t_seg <= t_ini_timer + dur_timer)
+            )
+            t_en_timer = (t_seg - t_ini_timer) if (t_ini_timer is not None) else 0.0
+
+            # Mientras corre la cuenta regresiva del timer, Mr Nubsito pasa a 'idle' esperando la respuesta.
+            if seg.mostrar_timer and t_ini_timer is not None and t_seg >= (t_ini_timer - 0.03):
+                gesto_frame = "idle"
+            elif esta_hablando or t_seg <= fin_voz + 0.15:
+                gesto_frame = seg.gesto_personaje
+            else:
+                gesto_frame = "idle"
+
+            # VELOCIDAD REAL 1:1 CONTINUA: El video de fondo avanza SIEMPRE de forma continua
+            # a exactamente 1 segundo real por segundo de video (al compás de tiempo_global).
+            t_video_actual = min(dur_video_input - 0.001, tiempo_global)
             frame_video_pil = lector_video.obtener_frame_en_segundo(t_video_actual)
 
             lienzo = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 255))
 
             if es_split and motor_personaje is not None:
                 frame_top = motor_personaje.renderizar_frame(
-                    gesto_solicitado=seg.gesto_personaje,
+                    gesto_solicitado=gesto_frame,
                     tiempo_global=tiempo_global,
                     tiempo_en_segmento=t_seg,
                     nivel_voz_rms=rms_val,
@@ -1862,26 +2889,16 @@ async def editar_video_con_guion(ruta_video: Path, ruta_guion: Path) -> Path:
                 lienzo.paste(frame_top, (0, 0))
                 lienzo.paste(frame_video_pil, (0, TOP_HEIGHT))
 
-                # Overlays visuales (Emoji, Flecha Roja, Like&Sub sin fondo verde)
-                gestor_assets.dibujar_emoji(lienzo, seg.emoji, seg.posicion_emoji, t_seg, dur_seg_exacta, es_split=True)
-                gestor_assets.dibujar_flecha(lienzo, seg.flecha, t_seg, dur_seg_exacta, es_split=True)
+                # Overlays visuales (Emoji, Flecha Roja, Timer de Trivia y Like&Sub sin fondo verde)
+                gestor_assets.dibujar_emoji(lienzo, seg.emoji, seg.posicion_emoji, t_seg, dur_hablada_seg, es_split=True)
+                gestor_assets.dibujar_flecha_inteligente(lienzo, plan_flecha, f_idx, es_split=True)
+                gestor_assets.dibujar_timer(lienzo, en_timer, t_en_timer, dur_timer, es_split=True)
                 gestor_assets.dibujar_like_sub(lienzo, seg.mostrar_like_sub, t_seg, dur_seg_exacta)
 
                 draw_lienzo = ImageDraw.Draw(lienzo)
                 draw_lienzo.line([(0, TOP_HEIGHT), (WIDTH, TOP_HEIGHT)], fill=(0, 0, 0, 255), width=10)
 
-                if config.titulo_superior:
-                    fuente_t = cargar_fuente(50)
-                    dibujar_texto_mrbeast(
-                        draw_lienzo,
-                        (WIDTH // 2, TOP_HEIGHT + 78),
-                        config.titulo_superior.upper(),
-                        fuente_t,
-                        (255, 255, 255),
-                        9,
-                        (5, 6),
-                    )
-
+                # NOTA: TITULO_SUPERIOR NO se dibuja en pantalla (se usa exclusivamente para el nombre del archivo .mp4)
                 renderizar_subtitulos_mrbeast(
                     draw_lienzo,
                     palabras_sub,
@@ -1893,22 +2910,12 @@ async def editar_video_con_guion(ruta_video: Path, ruta_guion: Path) -> Path:
             else:
                 lienzo.paste(frame_video_pil, (0, 0))
 
-                gestor_assets.dibujar_emoji(lienzo, seg.emoji, seg.posicion_emoji, t_seg, dur_seg_exacta, es_split=False)
-                gestor_assets.dibujar_flecha(lienzo, seg.flecha, t_seg, dur_seg_exacta, es_split=False)
+                gestor_assets.dibujar_emoji(lienzo, seg.emoji, seg.posicion_emoji, t_seg, dur_hablada_seg, es_split=False)
+                gestor_assets.dibujar_flecha_inteligente(lienzo, plan_flecha, f_idx, es_split=False)
+                gestor_assets.dibujar_timer(lienzo, en_timer, t_en_timer, dur_timer, es_split=False)
                 gestor_assets.dibujar_like_sub(lienzo, seg.mostrar_like_sub, t_seg, dur_seg_exacta)
 
                 draw_lienzo = ImageDraw.Draw(lienzo)
-                if config.titulo_superior:
-                    fuente_t = cargar_fuente(58)
-                    dibujar_texto_mrbeast(
-                        draw_lienzo,
-                        (WIDTH // 2, 180),
-                        config.titulo_superior.upper(),
-                        fuente_t,
-                        (255, 255, 255),
-                        10,
-                        (5, 7),
-                    )
                 renderizar_subtitulos_mrbeast(
                     draw_lienzo,
                     palabras_sub,
@@ -2086,6 +3093,52 @@ def iniciar_aplicacion_gui() -> None:
         except Exception:
             pass
 
+    def copiar_prompt_con_link() -> None:
+        url_actual = entry_url.get().strip()
+        dur_info = "auto (detectada al ver el video)"
+        if DEFAULT_VIDEO_INPUT.exists():
+            try:
+                cap_info = cv2.VideoCapture(str(DEFAULT_VIDEO_INPUT))
+                fps_i = cap_info.get(cv2.CAP_PROP_FPS) or 30.0
+                fc_i = cap_info.get(cv2.CAP_PROP_FRAME_COUNT) or 0
+                cap_info.release()
+                if fc_i > 0 and fps_i > 0:
+                    dur_s = fc_i / fps_i
+                    mins = int(dur_s // 60)
+                    secs = int(dur_s % 60)
+                    dur_info = f"{mins:02d}:{secs:02d} ({dur_s:.1f} segundos)"
+            except Exception:
+                pass
+
+        ruta_p = BASE_DIR / "PROMPT_PARA_IA_GUIONES.txt"
+        plantilla = ""
+        if ruta_p.exists():
+            try:
+                plantilla = ruta_p.read_text(encoding="utf-8-sig")
+            except Exception:
+                pass
+
+        if not plantilla:
+            plantilla = PLANTILLA_GUION_GENERICA
+
+        link_usar = url_actual if url_actual else "[PEGA AQUÍ EL LINK DEL VIDEO DE YOUTUBE]"
+        texto_copiar = plantilla
+        if "[PEGA_AQUÍ_EL_LINK_DEL_VIDEO]" in texto_copiar:
+            texto_copiar = texto_copiar.replace("[PEGA_AQUÍ_EL_LINK_DEL_VIDEO]", link_usar)
+        elif "[PEGA AQUÍ EL LINK DEL VIDEO DE YOUTUBE]" in texto_copiar:
+            texto_copiar = texto_copiar.replace("[PEGA AQUÍ EL LINK DEL VIDEO DE YOUTUBE]", link_usar)
+        else:
+            texto_copiar = f"LINK DEL VIDEO DE YOUTUBE:\n{link_usar}\n\n" + texto_copiar
+
+        if "[DURACION_EXACTA_VIDEO]" in texto_copiar:
+            texto_copiar = texto_copiar.replace("[DURACION_EXACTA_VIDEO]", dur_info)
+
+        root.clipboard_clear()
+        root.clipboard_append(texto_copiar)
+
+        btn_copiar_prompt.configure(text="✅ ¡Copiado con Link!", bg=ACCENT_GREEN, fg="#052e16")
+        root.after(2500, lambda: btn_copiar_prompt.configure(text="📋 Copiar Prompt para Gemini (con Link)", bg="#4f46e5", fg="#ffffff"))
+
     btn_pegar_url = tk.Button(
         url_row,
         text="Pegar Link",
@@ -2100,7 +3153,23 @@ def iniciar_aplicacion_gui() -> None:
         pady=6,
         cursor="hand2",
     )
-    btn_pegar_url.pack(side=tk.RIGHT)
+    btn_pegar_url.pack(side=tk.LEFT, padx=(0, 6))
+
+    btn_copiar_prompt = tk.Button(
+        url_row,
+        text="📋 Copiar Prompt para Gemini (con Link)",
+        command=copiar_prompt_con_link,
+        font=("Segoe UI", 9, "bold"),
+        bg="#4f46e5",
+        fg="#ffffff",
+        activebackground="#4338ca",
+        activeforeground="#ffffff",
+        relief=tk.FLAT,
+        padx=14,
+        pady=6,
+        cursor="hand2",
+    )
+    btn_copiar_prompt.pack(side=tk.LEFT)
 
     # 2. Campo de Guión
     guion_card = tk.Frame(root, bg=BG_CARD, padx=16, pady=12, highlightthickness=1, highlightbackground="#2e3446")
@@ -2157,6 +3226,22 @@ def iniciar_aplicacion_gui() -> None:
                 txt_guion.insert("1.0", clip)
         except Exception:
             pass
+
+    btn_copiar_prompt_g = tk.Button(
+        guion_top_row,
+        text="📋 Copiar Prompt para Gemini",
+        command=copiar_prompt_con_link,
+        font=("Segoe UI", 9, "bold"),
+        bg="#4f46e5",
+        fg="#ffffff",
+        activebackground="#4338ca",
+        activeforeground="#ffffff",
+        relief=tk.FLAT,
+        padx=10,
+        pady=3,
+        cursor="hand2",
+    )
+    btn_copiar_prompt_g.pack(side=tk.RIGHT, padx=(6, 0))
 
     btn_plantilla = tk.Button(
         guion_top_row,

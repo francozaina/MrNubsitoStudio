@@ -1,25 +1,11 @@
-# ==============================================================================
-# FORMATO DE GUIÓN ESCALABLE - MR NUBSITO STUDIO v4.0
-# ==============================================================================
-# Columnas separadas por barra vertical (|):
-#   TIEMPO | GESTO | SFX | EMOJI | FLECHA | LIKE_SUB | TEXTO
-#
-# - TIEMPO  : Rango del video original (ej. 00:00 - 00:04) o 'auto'
-# - GESTO   : saludo | hablando | like | idle
-# - SFX     : shock | whoosh | ding | tictac | ninguno
-# - EMOJI   : diablo | enojo | fiesta | lloro | risa | sorprendido | sueno | ninguno
-#             (Opcional: puedes elegir posición con ':', ej. risa:izquierda o sorprendido:derecha)
-# - FLECHA  : centro | izquierda | derecha | arriba | abajo | ninguna
-#             (También acepta coordenadas en porcentaje del video, ej. 50,50)
-# - LIKE_SUB: si | no  (Superpone el video Like&Sub.mp4 eliminando su pantalla verde)
-# - TEXTO   : Lo que dice Mr Nubsito (Voz IA + Subtítulos MrBeast)
-# ==============================================================================
-TITULO_SUPERIOR: CON MAMÁ VS CON PAPÁ 5
+TITULO_SUPERIOR: Normal Vs Millonario En Roblox
 MODO_PANTALLA: split
+VOLUMEN_VIDEO_ORIGINAL: 0.22
 ARCHIVO_SALIDA: auto
 
 [GUION]
-00:00 - 00:04 | saludo | shock | risa:derecha | centro | no | ¡Estar con mamá contra estar con papá! Mamá estaciona con cuidado, ¡pero papá hace derrapes y me lleva colgado del auto!
-00:04 - 00:07 | hablando | whoosh | sorprendido:izquierda | izquierda | no | ¡Mamá carga una cajita, mientras que papá lleva tres cajas gigantes con una sola mano!
-00:07 - 00:11 | hablando | shock | diablo:derecha | arriba | no | ¡Jugando al básquet mamá me deja anotar, pero papá salta al cielo y me bloquea sin piedad!
-00:11 - 00:17 | like | ding | fiesta:izquierda | arriba | si | ¡Y en las escondidas se pega al techo como el Hombre Araña! ¡Dale like y suscríbete ahora mismo porque a los diez mil suscriptores haré un mega sorteo de Robux!
+TIEMPO | GESTO | SFX | EMOJI | FLECHA | LIKE_SUB | TIMER | TEXTO
+00:00 - 00:04 | hablando  | boxing_bell+cash_ting | sorprendido:derecha   | ninguna       | no | no | ¡Si se cae el celular la gente normal lo levanta, pero el rico saca uno nuevo!
+00:04 - 00:08 | hablando2 | whoosh+punch          | diablo:izquierda      | ninguna       | no | no | ¡Uno exprime toda la pasta dental haciendo fuerza y el millonario tira el tubo casi lleno!
+00:08 - 00:12 | hablando  | awww+cartoon_laugh    | risa:derecha          | 48,28@00:11.1 | no | no | ¡Mientras nosotros chupamos la tapa del yogur, el rico solo come eso y tira el bote!
+00:12 - 00:16 | hablando2 | shock+party_horn      | fiesta:izquierda      | ninguna       | no | no | ¡Y en vez de sufrir con un ventilador viejo, él se abanica con fajos de billetes!
