@@ -3070,12 +3070,16 @@ def asegurar_acceso_directo_con_icono() -> None:
 
 
 def iniciar_aplicacion_gui() -> None:
-    # 1. Configurar AppUserModelID para que Windows muestre logo.ico en la barra de tareas en lugar del de Python
+    # 1. Configurar AppUserModelID y DPI Awareness en Windows
     if sys.platform == "win32":
         try:
             import ctypes
             myappid = "mrnubsito.studio.editor.v4"
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+            try:
+                ctypes.windll.shcore.SetProcessDpiAwareness(1)
+            except Exception:
+                pass
             hwnd = ctypes.windll.kernel32.GetConsoleWindow()
             if hwnd:
                 ctypes.windll.user32.ShowWindow(hwnd, 0)  # 0 = SW_HIDE
@@ -3087,16 +3091,38 @@ def iniciar_aplicacion_gui() -> None:
     import queue
     import threading
     import tkinter as tk
-    from tkinter import messagebox, scrolledtext
+    from tkinter import messagebox, ttk
 
     root = tk.Tk()
-    root.title("Mr Nubsito Studio v4.3 - Editor Automático de Shorts")
-    root.geometry("920x760")
-    root.minsize(780, 640)
-    root.configure(bg="#14161f")
+    root.title("Mr Nubsito Studio")
+    root.geometry("980x800")
+    root.minsize(840, 680)
 
-    # 2. Cargar logo.ico en la barra de título de la ventana y en la barra de tareas
+    # Paleta de diseño profesional (Obsidian Studio)
+    BG_APP = "#0c0d10"
+    BG_SURFACE = "#13151a"
+    BG_HEADER = "#101217"
+    BG_INPUT = "#08090c"
+    BG_BTN_SEC = "#1e222b"
+    BG_BTN_SEC_HOVER = "#282d39"
+    BG_BTN_ACCENT = "#2563eb"
+    BG_BTN_ACCENT_HOVER = "#3b82f6"
+    ACCENT_PRIMARY = "#eab308"
+    ACCENT_PRIMARY_HOVER = "#facc15"
+    BORDER_SUBTLE = "#222630"
+    BORDER_INPUT = "#262a36"
+    FG_PRIMARY = "#f3f4f6"
+    FG_SECONDARY = "#9ca3af"
+    FG_MUTED = "#6b7280"
+    STATUS_GREEN = "#10b981"
+    STATUS_AMBER = "#f59e0b"
+    STATUS_RED = "#ef4444"
+
+    root.configure(bg=BG_APP)
+
+    # 2. Cargar logo.ico en la barra de título y en la barra de tareas + Barra de título oscura nativa en Windows 11/10
     ruta_ico = BASE_DIR / "logo.ico"
+    logo_header_tk = None
     if ruta_ico.exists():
         try:
             root.iconbitmap(default=str(ruta_ico))
@@ -3109,73 +3135,252 @@ def iniciar_aplicacion_gui() -> None:
             from PIL import ImageTk
             img_ico = Image.open(str(ruta_ico))
             root.tk.call("wm", "iconphoto", root._w, ImageTk.PhotoImage(img_ico))
+            img_header = img_ico.convert("RGBA").resize((34, 34), Image.Resampling.LANCZOS)
+            logo_header_tk = ImageTk.PhotoImage(img_header)
         except Exception:
             pass
+
+    if sys.platform == "win32":
+        def _aplicar_barra_oscura() -> None:
+            try:
+                import ctypes
+                hwnd_tk = ctypes.windll.user32.GetParent(root.winfo_id())
+                if not hwnd_tk:
+                    hwnd_tk = root.winfo_id()
+                val = ctypes.c_int(1)
+                # DWMWA_USE_IMMERSIVE_DARK_MODE = 20 (Windows 11 / Win10 20H1+)
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd_tk, 20, ctypes.byref(val), ctypes.sizeof(val))
+            except Exception:
+                pass
+        root.after(10, _aplicar_barra_oscura)
+
+    # Estilo TTK para Scrollbars oscuras minimalistas (reemplaza las barras blancas antiguas de Windows)
+    style = ttk.Style(root)
+    try:
+        style.theme_use("clam")
+    except Exception:
+        pass
+    style.configure(
+        "Studio.Vertical.TScrollbar",
+        gripcount=0,
+        background="#262a36",
+        darkcolor=BG_INPUT,
+        lightcolor=BG_INPUT,
+        troughcolor=BG_INPUT,
+        bordercolor=BG_INPUT,
+        arrowcolor=FG_MUTED,
+        relief="flat",
+        width=10,
+    )
+    style.map(
+        "Studio.Vertical.TScrollbar",
+        background=[("active", "#3b4254"), ("!disabled", "#262a36")],
+    )
 
     cola_logs: "queue.Queue[str]" = queue.Queue()
     editando_lock = threading.Lock()
 
-    # Estilos y colores
-    BG_MAIN = "#14161f"
-    BG_CARD = "#1e2230"
-    BG_INPUT = "#10121a"
-    FG_TEXT = "#f3f4f6"
-    FG_MUTED = "#9ca3af"
-    ACCENT_YELLOW = "#facc15"
-    ACCENT_GREEN = "#22c55e"
-    ACCENT_BLUE = "#3b82f6"
+    def crear_boton(
+        parent: tk.Widget,
+        texto: str,
+        comando,
+        bg_normal: str = BG_BTN_SEC,
+        bg_hover: str = BG_BTN_SEC_HOVER,
+        fg_normal: str = FG_PRIMARY,
+        font_spec: tuple = ("Segoe UI Semibold", 9),
+        padx: int = 14,
+        pady: int = 6,
+        borde: str = "#2c313f",
+    ) -> tk.Button:
+        btn = tk.Button(
+            parent,
+            text=texto,
+            command=comando,
+            font=font_spec,
+            bg=bg_normal,
+            fg=fg_normal,
+            activebackground=bg_hover,
+            activeforeground=fg_normal,
+             disabledforeground=FG_MUTED,
+            relief=tk.FLAT,
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=borde,
+            highlightcolor=borde,
+            padx=padx,
+            pady=pady,
+            cursor="hand2",
+        )
 
-    # Encabezado
-    header_frame = tk.Frame(root, bg=BG_MAIN, padx=20, pady=12)
-    header_frame.pack(fill=tk.X)
+        def _on_enter(_e) -> None:
+            if str(btn["state"]) != tk.DISABLED:
+                btn.configure(bg=bg_hover)
+
+        def _on_leave(_e) -> None:
+            if str(btn["state"]) != tk.DISABLED:
+                btn.configure(bg= getattr(btn, "_bg_base", bg_normal))
+
+        btn._bg_base = bg_normal  # type: ignore[attr-defined]
+        btn.bind("<Enter>", _on_enter)
+        btn.bind("<Leave>", _on_leave)
+        return btn
+
+    # =========================================================================
+    # BARRA SUPERIOR DE ESTUDIO (HEADER)
+    # =========================================================================
+    header_bar = tk.Frame(root, bg=BG_HEADER, padx=24, pady=14)
+    header_bar.pack(fill=tk.X)
+    tk.Frame(root, bg=BORDER_SUBTLE, height=1).pack(fill=tk.X)
+
+    brand_frame = tk.Frame(header_bar, bg=BG_HEADER)
+    brand_frame.pack(side=tk.LEFT)
+
+    if logo_header_tk is not None:
+        lbl_logo = tk.Label(brand_frame, image=logo_header_tk, bg=BG_HEADER)
+        lbl_logo.image = logo_header_tk  # type: ignore[attr-defined]
+        lbl_logo.pack(side=tk.LEFT, padx=(0, 12))
+
+    title_stack = tk.Frame(brand_frame, bg=BG_HEADER)
+    title_stack.pack(side=tk.LEFT)
+
+    title_row = tk.Frame(title_stack, bg=BG_HEADER)
+    title_row.pack(anchor="w")
 
     lbl_titulo = tk.Label(
-        header_frame,
+        title_row,
         text="MR NUBSITO STUDIO",
-        font=("Segoe UI", 18, "bold"),
-        fg=ACCENT_YELLOW,
-        bg=BG_MAIN,
+        font=("Segoe UI", 14, "bold"),
+        fg=FG_PRIMARY,
+        bg=BG_HEADER,
     )
     lbl_titulo.pack(side=tk.LEFT)
 
+    lbl_badge_ver = tk.Label(
+        title_row,
+        text="v4.3",
+        font=("Consolas", 8, "bold"),
+        fg=ACCENT_PRIMARY,
+        bg="#231f10",
+        padx=6,
+        pady=1,
+    )
+    lbl_badge_ver.pack(side=tk.LEFT, padx=(8, 0), pady=(2, 0))
+
     lbl_sub = tk.Label(
-        header_frame,
-        text="Pegá el link del Short y el guión para generar el video automáticamente",
-        font=("Segoe UI", 10),
+        title_stack,
+        text="Suite de producción automatizada de YouTube Shorts",
+        font=("Segoe UI", 9),
         fg=FG_MUTED,
-        bg=BG_MAIN,
+        bg=BG_HEADER,
+    )
+    lbl_sub.pack(anchor="w")
+
+    # Indicador de estado en vivo a la derecha del Header
+    status_pill = tk.Frame(
+        header_bar,
+        bg="#161922",
         padx=12,
+        pady=5,
+        highlightthickness=1,
+        highlightbackground=BORDER_SUBTLE,
     )
-    lbl_sub.pack(side=tk.LEFT, pady=(6, 0))
+    status_pill.pack(side=tk.RIGHT)
 
-    # 1. Campo de Link de YouTube
-    url_card = tk.Frame(root, bg=BG_CARD, padx=16, pady=12, highlightthickness=1, highlightbackground="#2e3446")
-    url_card.pack(fill=tk.X, padx=20, pady=(0, 10))
-
-    lbl_url = tk.Label(
-        url_card,
-        text="1. Link del Video de YouTube / Short:",
-        font=("Segoe UI", 11, "bold"),
-        fg=FG_TEXT,
-        bg=BG_CARD,
+    lbl_status_dot = tk.Label(
+        status_pill,
+        text="●",
+        font=("Segoe UI", 9),
+        fg=STATUS_GREEN,
+        bg="#161922",
     )
-    lbl_url.pack(anchor="w", pady=(0, 6))
+    lbl_status_dot.pack(side=tk.LEFT, padx=(0, 6))
 
-    url_row = tk.Frame(url_card, bg=BG_CARD)
+    lbl_estado = tk.Label(
+        status_pill,
+        text="Listo para renderizar",
+        font=("Segoe UI Semibold", 9),
+        fg=FG_SECONDARY,
+        bg="#161922",
+    )
+    lbl_estado.pack(side=tk.LEFT)
+
+    def set_estado_ui(texto: str, color_dot: str, color_texto: str = FG_SECONDARY) -> None:
+        lbl_status_dot.configure(fg=color_dot)
+        lbl_estado.configure(text=texto, fg=color_texto)
+
+    # Contenedor principal con márgenes equilibrados
+    main_container = tk.Frame(root, bg=BG_APP, padx=24, pady=16)
+    main_container.pack(fill=tk.BOTH, expand=True)
+
+    # =========================================================================
+    # SECCIÓN 01: FUENTE DE VIDEO (YOUTUBE SHORT)
+    # =========================================================================
+    url_card = tk.Frame(
+        main_container,
+        bg=BG_SURFACE,
+        padx=18,
+        pady=14,
+        highlightthickness=1,
+        highlightbackground=BORDER_SUBTLE,
+    )
+    url_card.pack(fill=tk.X, pady=(0, 12))
+
+    url_header = tk.Frame(url_card, bg=BG_SURFACE)
+    url_header.pack(fill=tk.X, pady=(0, 8))
+
+    tk.Label(
+        url_header,
+        text="01",
+        font=("Consolas", 9, "bold"),
+        fg=ACCENT_PRIMARY,
+        bg="#231f10",
+        padx=6,
+        pady=1,
+    ).pack(side=tk.LEFT, padx=(0, 8))
+
+    tk.Label(
+        url_header,
+        text="ORIGEN DEL VIDEO",
+        font=("Segoe UI", 10, "bold"),
+        fg=FG_PRIMARY,
+        bg=BG_SURFACE,
+    ).pack(side=tk.LEFT)
+
+    tk.Label(
+        url_header,
+        text="Enlace de YouTube Shorts (opcional si ya existe video_input.mp4)",
+        font=("Segoe UI", 9),
+        fg=FG_MUTED,
+        bg=BG_SURFACE,
+    ).pack(side=tk.RIGHT)
+
+    url_row = tk.Frame(url_card, bg=BG_SURFACE)
     url_row.pack(fill=tk.X)
 
-    entry_url = tk.Entry(
+    entry_wrapper = tk.Frame(
         url_row,
-        font=("Consolas", 11),
         bg=BG_INPUT,
-        fg="#ffffff",
-        insertbackground="#ffffff",
-        relief=tk.FLAT,
         highlightthickness=1,
-        highlightbackground="#374151",
-        highlightcolor=ACCENT_YELLOW,
+        highlightbackground=BORDER_INPUT,
+        highlightcolor=ACCENT_PRIMARY,
+        padx=10,
+        pady=1,
     )
-    entry_url.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=7, padx=(0, 8))
+    entry_wrapper.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
+
+    entry_url = tk.Entry(
+        entry_wrapper,
+        font=("Consolas", 10),
+        bg=BG_INPUT,
+        fg=FG_PRIMARY,
+        insertbackground=ACCENT_PRIMARY,
+        selectbackground="#283147",
+        selectforeground="#ffffff",
+        relief=tk.FLAT,
+        bd=0,
+        highlightthickness=0,
+    )
+    entry_url.pack(fill=tk.X, ipady=6)
 
     def pegar_url() -> None:
         try:
@@ -3228,73 +3433,107 @@ def iniciar_aplicacion_gui() -> None:
         root.clipboard_clear()
         root.clipboard_append(texto_copiar)
 
-        btn_copiar_prompt.configure(text="✅ ¡Copiado con Link!", bg=ACCENT_GREEN, fg="#052e16")
-        root.after(2500, lambda: btn_copiar_prompt.configure(text="📋 Copiar Prompt para Gemini (con Link)", bg="#4f46e5", fg="#ffffff"))
+        btn_copiar_prompt._bg_base = STATUS_GREEN  # type: ignore[attr-defined]
+        btn_copiar_prompt.configure(text="Prompt copiado al portapapeles", bg=STATUS_GREEN, fg="#052e16")
 
-    btn_pegar_url = tk.Button(
-        url_row,
-        text="Pegar Link",
-        command=pegar_url,
-        font=("Segoe UI", 9, "bold"),
-        bg="#2d3348",
-        fg=FG_TEXT,
-        activebackground="#3e4663",
-        activeforeground="#ffffff",
-        relief=tk.FLAT,
-        padx=12,
-        pady=6,
-        cursor="hand2",
-    )
-    btn_pegar_url.pack(side=tk.LEFT, padx=(0, 6))
+        def _restaurar_btn_prompt() -> None:
+            btn_copiar_prompt._bg_base = BG_BTN_ACCENT  # type: ignore[attr-defined]
+            btn_copiar_prompt.configure(text="Copiar Prompt IA (con Link)", bg=BG_BTN_ACCENT, fg="#ffffff")
 
-    btn_copiar_prompt = tk.Button(
+        root.after(2200, _restaurar_btn_prompt)
+
+    btn_pegar_url = crear_boton(
         url_row,
-        text="📋 Copiar Prompt para Gemini (con Link)",
-        command=copiar_prompt_con_link,
-        font=("Segoe UI", 9, "bold"),
-        bg="#4f46e5",
-        fg="#ffffff",
-        activebackground="#4338ca",
-        activeforeground="#ffffff",
-        relief=tk.FLAT,
+        texto="Pegar Link",
+        comando=pegar_url,
         padx=14,
         pady=6,
-        cursor="hand2",
+    )
+    btn_pegar_url.pack(side=tk.LEFT, padx=(0, 8))
+
+    btn_copiar_prompt = crear_boton(
+        url_row,
+        texto="Copiar Prompt IA (con Link)",
+        comando=copiar_prompt_con_link,
+        bg_normal=BG_BTN_ACCENT,
+        bg_hover=BG_BTN_ACCENT_HOVER,
+        fg_normal="#ffffff",
+        borde="#1d4ed8",
+        padx=14,
+        pady=6,
     )
     btn_copiar_prompt.pack(side=tk.LEFT)
 
-    # 2. Campo de Guión
-    guion_card = tk.Frame(root, bg=BG_CARD, padx=16, pady=12, highlightthickness=1, highlightbackground="#2e3446")
-    guion_card.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 10))
+    # =========================================================================
+    # SECCIÓN 02: EDITOR DE GUIÓN ESTRUCTURADO
+    # =========================================================================
+    guion_card = tk.Frame(
+        main_container,
+        bg=BG_SURFACE,
+        padx=18,
+        pady=14,
+        highlightthickness=1,
+        highlightbackground=BORDER_SUBTLE,
+    )
+    guion_card.pack(fill=tk.BOTH, expand=True, pady=(0, 12))
 
-    guion_top_row = tk.Frame(guion_card, bg=BG_CARD)
-    guion_top_row.pack(fill=tk.X, pady=(0, 6))
+    guion_top_row = tk.Frame(guion_card, bg=BG_SURFACE)
+    guion_top_row.pack(fill=tk.X, pady=(0, 10))
+
+    tk.Label(
+        guion_top_row,
+        text="02",
+        font=("Consolas", 9, "bold"),
+        fg=ACCENT_PRIMARY,
+        bg="#231f10",
+        padx=6,
+        pady=1,
+    ).pack(side=tk.LEFT, padx=(0, 8))
 
     lbl_guion = tk.Label(
         guion_top_row,
-        text="2. Guión del Video:",
-        font=("Segoe UI", 11, "bold"),
-        fg=FG_TEXT,
-        bg=BG_CARD,
+        text="GUIÓN DE PRODUCCIÓN",
+        font=("Segoe UI", 10, "bold"),
+        fg=FG_PRIMARY,
+        bg=BG_SURFACE,
     )
     lbl_guion.pack(side=tk.LEFT)
 
-    txt_guion = scrolledtext.ScrolledText(
+    # Editor de texto con barra de desplazamiento oscura personalizada
+    editor_frame = tk.Frame(
         guion_card,
+        bg=BG_INPUT,
+        highlightthickness=1,
+        highlightbackground=BORDER_INPUT,
+        highlightcolor=ACCENT_PRIMARY,
+    )
+    editor_frame.pack(fill=tk.BOTH, expand=True)
+
+    scroll_guion = ttk.Scrollbar(editor_frame, orient=tk.VERTICAL, style="Studio.Vertical.TScrollbar")
+    scroll_guion.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 2), pady=2)
+
+    txt_guion = tk.Text(
+        editor_frame,
         font=("Consolas", 10),
         bg=BG_INPUT,
-        fg="#e5e7eb",
-        insertbackground="#ffffff",
+        fg="#e2e8f0",
+        insertbackground=ACCENT_PRIMARY,
+        selectbackground="#283147",
+        selectforeground="#ffffff",
         relief=tk.FLAT,
+        bd=0,
         height=13,
         wrap=tk.WORD,
-        highlightthickness=1,
-        highlightbackground="#374151",
-        highlightcolor=ACCENT_YELLOW,
-        padx=10,
-        pady=10,
+        highlightthickness=0,
+        padx=14,
+        pady=12,
+        spacing1=2,
+        spacing3=2,
+        undo=True,
+        yscrollcommand=scroll_guion.set,
     )
-    txt_guion.pack(fill=tk.BOTH, expand=True)
+    txt_guion.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    scroll_guion.configure(command=txt_guion.yview)
 
     # Cargar el guion actual o la plantilla por defecto
     if DEFAULT_GUION_TXT.exists():
@@ -3319,70 +3558,43 @@ def iniciar_aplicacion_gui() -> None:
         except Exception:
             pass
 
-    btn_copiar_prompt_g = tk.Button(
+    btn_plantilla = crear_boton(
         guion_top_row,
-        text="📋 Copiar Prompt para Gemini",
-        command=copiar_prompt_con_link,
-        font=("Segoe UI", 9, "bold"),
-        bg="#4f46e5",
-        fg="#ffffff",
-        activebackground="#4338ca",
-        activeforeground="#ffffff",
-        relief=tk.FLAT,
-        padx=10,
-        pady=3,
-        cursor="hand2",
-    )
-    btn_copiar_prompt_g.pack(side=tk.RIGHT, padx=(6, 0))
-
-    btn_plantilla = tk.Button(
-        guion_top_row,
-        text="Cargar Plantilla Ejemplo",
-        command=restaurar_plantilla,
-        font=("Segoe UI", 9),
-        bg="#2d3348",
-        fg=FG_TEXT,
-        activebackground="#3e4663",
-        activeforeground="#ffffff",
-        relief=tk.FLAT,
-        padx=10,
-        pady=3,
-        cursor="hand2",
+        texto="Cargar Plantilla",
+        comando=restaurar_plantilla,
+        font_spec=("Segoe UI", 9),
+        padx=12,
+        pady=4,
     )
     btn_plantilla.pack(side=tk.RIGHT, padx=(6, 0))
 
-    btn_pegar_guion = tk.Button(
+    btn_pegar_guion = crear_boton(
         guion_top_row,
-        text="Reemplazar con Portapapeles",
-        command=pegar_guion,
-        font=("Segoe UI", 9, "bold"),
-        bg="#2d3348",
-        fg=FG_TEXT,
-        activebackground="#3e4663",
-        activeforeground="#ffffff",
-        relief=tk.FLAT,
-        padx=10,
-        pady=3,
-        cursor="hand2",
+        texto="Pegar desde Portapapeles",
+        comando=pegar_guion,
+        font_spec=("Segoe UI Semibold", 9),
+        padx=12,
+        pady=4,
     )
     btn_pegar_guion.pack(side=tk.RIGHT)
 
-    # 3. Botón EDITAR y Barra de Acciones
-    acciones_frame = tk.Frame(root, bg=BG_MAIN, padx=20, pady=4)
-    acciones_frame.pack(fill=tk.X)
+    # =========================================================================
+    # SECCIÓN 03: BARRA DE ACCIONES PRINCIPALES
+    # =========================================================================
+    acciones_frame = tk.Frame(main_container, bg=BG_APP)
+    acciones_frame.pack(fill=tk.X, pady=(0, 12))
 
-    btn_editar = tk.Button(
+    btn_editar = crear_boton(
         acciones_frame,
-        text="🎬  EDITAR VIDEO",
-        font=("Segoe UI", 13, "bold"),
-        bg=ACCENT_GREEN,
-        fg="#052e16",
-        activebackground="#16a34a",
-        activeforeground="#ffffff",
-        relief=tk.FLAT,
+        texto="RENDERIZAR VIDEO",
+        comando=None,
+        bg_normal=ACCENT_PRIMARY,
+        bg_hover=ACCENT_PRIMARY_HOVER,
+        fg_normal="#090a0d",
+        font_spec=("Segoe UI", 11, "bold"),
+        borde="#ca8a04",
         padx=28,
         pady=10,
-        cursor="hand2",
     )
     btn_editar.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
 
@@ -3393,45 +3605,78 @@ def iniciar_aplicacion_gui() -> None:
         except Exception:
             pass
 
-    btn_carpeta = tk.Button(
+    btn_carpeta = crear_boton(
         acciones_frame,
-        text="📂 Abrir Carpeta Output",
-        command=abrir_carpeta_salida,
-        font=("Segoe UI", 10, "bold"),
-        bg=ACCENT_BLUE,
-        fg="#ffffff",
-        activebackground="#2563eb",
-        activeforeground="#ffffff",
-        relief=tk.FLAT,
-        padx=16,
+        texto="Abrir Carpeta Output",
+        comando=abrir_carpeta_salida,
+        bg_normal=BG_BTN_SEC,
+        bg_hover=BG_BTN_SEC_HOVER,
+        fg_normal=FG_PRIMARY,
+        font_spec=("Segoe UI Semibold", 10),
+        padx=18,
         pady=10,
-        cursor="hand2",
     )
     btn_carpeta.pack(side=tk.RIGHT)
 
-    # 4. Consola de Progreso en Vivo
-    log_card = tk.Frame(root, bg=BG_CARD, padx=14, pady=8, highlightthickness=1, highlightbackground="#2e3446")
-    log_card.pack(fill=tk.X, padx=20, pady=(6, 16))
-
-    lbl_estado = tk.Label(
-        log_card,
-        text="Estado: Listo para editar",
-        font=("Segoe UI", 9, "bold"),
-        fg=ACCENT_YELLOW,
-        bg=BG_CARD,
+    # =========================================================================
+    # SECCIÓN 04: CONSOLA DE TELEMETRÍA Y PROGRESO
+    # =========================================================================
+    log_card = tk.Frame(
+        main_container,
+        bg=BG_SURFACE,
+        padx=16,
+        pady=10,
+        highlightthickness=1,
+        highlightbackground=BORDER_SUBTLE,
     )
-    lbl_estado.pack(anchor="w", pady=(0, 4))
+    log_card.pack(fill=tk.X)
 
-    txt_logs = scrolledtext.ScrolledText(
+    log_header = tk.Frame(log_card, bg=BG_SURFACE)
+    log_header.pack(fill=tk.X, pady=(0, 6))
+
+    tk.Label(
+        log_header,
+        text="REGISTRO DE PROCESAMIENTO",
+        font=("Segoe UI", 8, "bold"),
+        fg=FG_MUTED,
+        bg=BG_SURFACE,
+    ).pack(side=tk.LEFT)
+
+    tk.Label(
+        log_header,
+        text="1080×1920 · 60 FPS · Audio 44.1 kHz",
+        font=("Consolas", 8),
+        fg=FG_MUTED,
+        bg=BG_SURFACE,
+    ).pack(side=tk.RIGHT)
+
+    log_box_frame = tk.Frame(
         log_card,
+        bg=BG_INPUT,
+        highlightthickness=1,
+        highlightbackground=BORDER_INPUT,
+    )
+    log_box_frame.pack(fill=tk.X)
+
+    scroll_logs = ttk.Scrollbar(log_box_frame, orient=tk.VERTICAL, style="Studio.Vertical.TScrollbar")
+    scroll_logs.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 2), pady=2)
+
+    txt_logs = tk.Text(
+        log_box_frame,
         font=("Consolas", 9),
-        bg="#0b0d13",
-        fg="#a7f3d0",
+        bg=BG_INPUT,
+        fg="#94a3b8",
         relief=tk.FLAT,
-        height=7,
+        bd=0,
+        height=6,
+        padx=10,
+        pady=8,
+        highlightthickness=0,
         state=tk.DISABLED,
+        yscrollcommand=scroll_logs.set,
     )
-    txt_logs.pack(fill=tk.X)
+    txt_logs.pack(side=tk.LEFT, fill=tk.X, expand=True)
+    scroll_logs.configure(command=txt_logs.yview)
 
     class RedireccionadorStdout:
         def __init__(self, q: "queue.Queue[str]"):
@@ -3461,12 +3706,13 @@ def iniciar_aplicacion_gui() -> None:
         texto_guion_actual = txt_guion.get("1.0", tk.END).strip()
 
         if not texto_guion_actual:
-            messagebox.showwarning("Guión vacío", "Por favor pega un guión antes de presionar Editar.")
+            messagebox.showwarning("Guión vacío", "Por favor pega un guión antes de presionar Renderizar.")
             editando_lock.release()
             return
 
-        btn_editar.configure(state=tk.DISABLED, text="⏳ PROCESANDO Y RENDERIZANDO...", bg="#4b5563", fg="#ffffff")
-        lbl_estado.configure(text="Estado: Trabajando... (No cierres la ventana)", fg=ACCENT_YELLOW)
+        btn_editar._bg_base = "#262a34"  # type: ignore[attr-defined]
+        btn_editar.configure(state=tk.DISABLED, text="PROCESANDO Y RENDERIZANDO VIDEO...", bg="#262a34", fg=FG_SECONDARY)
+        set_estado_ui("Renderizando en curso...", STATUS_AMBER, STATUS_AMBER)
         txt_logs.configure(state=tk.NORMAL)
         txt_logs.delete("1.0", tk.END)
         txt_logs.configure(state=tk.DISABLED)
@@ -3496,11 +3742,9 @@ def iniciar_aplicacion_gui() -> None:
                 ruta_final = asyncio.run(editar_video_con_guion(ruta_video_usar, DEFAULT_GUION_TXT))
 
                 def on_success() -> None:
-                    lbl_estado.configure(
-                        text=f"¡Listo! Video exportado en: output_shorts/{ruta_final.name}",
-                        fg=ACCENT_GREEN,
-                    )
-                    btn_editar.configure(state=tk.NORMAL, text="🎬  EDITAR VIDEO", bg=ACCENT_GREEN, fg="#052e16")
+                    set_estado_ui(f"Exportado: {ruta_final.name}", STATUS_GREEN, STATUS_GREEN)
+                    btn_editar._bg_base = ACCENT_PRIMARY  # type: ignore[attr-defined]
+                    btn_editar.configure(state=tk.NORMAL, text="RENDERIZAR VIDEO", bg=ACCENT_PRIMARY, fg="#090a0d")
                     messagebox.showinfo(
                         "¡Video Terminado!",
                         f"El video se generó con éxito en:\n\n{ruta_final}",
@@ -3512,8 +3756,9 @@ def iniciar_aplicacion_gui() -> None:
                 print(f"\n[ERROR] {exc}\n")
 
                 def on_error(err_msg: str = str(exc)) -> None:
-                    lbl_estado.configure(text=f"Error: {err_msg}", fg="#ef4444")
-                    btn_editar.configure(state=tk.NORMAL, text="🎬  EDITAR VIDEO", bg=ACCENT_GREEN, fg="#052e16")
+                    set_estado_ui("Error en el renderizado", STATUS_RED, STATUS_RED)
+                    btn_editar._bg_base = ACCENT_PRIMARY  # type: ignore[attr-defined]
+                    btn_editar.configure(state=tk.NORMAL, text="RENDERIZAR VIDEO", bg=ACCENT_PRIMARY, fg="#090a0d")
                     messagebox.showerror("Error durante la edición", err_msg)
 
                 root.after(0, on_error)
