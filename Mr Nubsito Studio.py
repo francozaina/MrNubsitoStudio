@@ -14,6 +14,7 @@ O simplemente ejecuta:
 """
 
 import asyncio
+import datetime
 import json
 import math
 import os
@@ -23,6 +24,7 @@ import sys
 import unicodedata
 import urllib.request
 import wave
+import webbrowser
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
@@ -41,6 +43,17 @@ try:
     HAS_EDGE_TTS = True
 except ImportError:
     HAS_EDGE_TTS = False
+
+try:
+    import googleapiclient.discovery
+    import googleapiclient.errors
+    from googleapiclient.http import MediaFileUpload
+    from google_auth_oauthlib.flow import InstalledAppFlow
+    from google.auth.transport.requests import Request
+    from google.oauth2.credentials import Credentials
+    HAS_GOOGLE_API = True
+except ImportError:
+    HAS_GOOGLE_API = False
 
 
 # ==============================================================================
@@ -3037,6 +3050,148 @@ def descargar_video_youtube(url: str) -> Path:
     raise FileNotFoundError("No se encontró el archivo 'video_input.mp4' tras la descarga.")
 
 
+# ==============================================================================
+# 9. INTEGRACIÓN DE SUBIDA Y PROGRAMACIÓN EN YOUTUBE (DATA API v3)
+# ==============================================================================
+YOUTUBE_SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+YOUTUBE_TOKEN_PATH = BASE_DIR / "youtube_token.json"
+YOUTUBE_CLIENT_SECRETS_PATH = BASE_DIR / "client_secrets.json"
+
+
+def buscar_archivo_client_secrets() -> Optional[Path]:
+    """Busca client_secrets.json o variaciones en la carpeta del proyecto."""
+    if YOUTUBE_CLIENT_SECRETS_PATH.exists():
+        return YOUTUBE_CLIENT_SECRETS_PATH
+    coincidencias = sorted(BASE_DIR.glob("client_secrets*.json"))
+    if coincidencias:
+        return coincidencias[0]
+    return None
+
+
+def obtener_servicio_youtube(ruta_secrets: Optional[Path] = None):
+    """Obtiene o renueva las credenciales OAuth 2.0 y retorna el cliente de YouTube API v3."""
+    if not HAS_GOOGLE_API:
+        raise RuntimeError(
+            "Las librerías de Google API no están instaladas en Python.\n"
+            "Ejecuta en consola: pip install google-api-python-client google-auth-oauthlib"
+        )
+
+    creds = None
+    if YOUTUBE_TOKEN_PATH.exists():
+        try:
+            creds = Credentials.from_authorized_user_file(str(YOUTUBE_TOKEN_PATH), YOUTUBE_SCOPES)
+        except Exception:
+            creds = None
+
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            try:
+                creds.refresh(Request())
+            except Exception:
+                creds = None
+
+        if not creds:
+            secrets_file = ruta_secrets or buscar_archivo_client_secrets()
+            if not secrets_file or not Path(secrets_file).exists():
+                raise FileNotFoundError(
+                    "No se encontró el archivo 'client_secrets.json' de Google Cloud.\n\n"
+                    "Pasos para obtenerlo:\n"
+                    "1. Ingresa a Google Cloud Console (console.cloud.google.com)\n"
+                    "2. Habilita 'YouTube Data API v3'\n"
+                    "3. En Pantalla de consentimiento de OAuth, configura la app y agrega tu correo como usuario de prueba\n"
+                    "4. En Credenciales, crea un 'ID de cliente de OAuth' de tipo 'Aplicación de escritorio'\n"
+                    "5. Descarga el JSON y guárdalo como 'client_secrets.json' en la carpeta de Mr Nubsito."
+                )
+            flow = InstalledAppFlow.from_client_secrets_file(str(secrets_file), YOUTUBE_SCOPES)
+            creds = flow.run_local_server(port=0)
+
+        with open(YOUTUBE_TOKEN_PATH, "w", encoding="utf-8") as token_f:
+            token_f.write(creds.to_json())
+
+    return googleapiclient.discovery.build("youtube", "v3", credentials=creds)
+
+
+def calcular_iso_programacion(fecha_str: str, hora_str: str) -> str:
+    """Convierte fecha YYYY-MM-DD y hora HH:MM locales a formato ISO 8601 UTC para la API de YouTube."""
+    fecha_s = fecha_str.strip()
+    hora_s = hora_str.strip()
+    dt_naive = datetime.datetime.strptime(f"{fecha_s} {hora_s}", "%Y-%m-%d %H:%M")
+    dt_local = dt_naive.astimezone()
+    dt_utc = dt_local.astimezone(datetime.timezone.utc)
+    if dt_utc <= datetime.datetime.now(datetime.timezone.utc):
+        raise ValueError("La fecha y hora programada debe ser posterior al momento actual.")
+    return dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def subir_video_a_youtube(
+    ruta_video: Path,
+    titulo: str,
+    descripcion: str = "",
+    no_es_para_ninos: bool = True,
+    fecha_programada_iso_utc: Optional[str] = None,
+    ruta_secrets: Optional[Path] = None,
+    callback_progreso = None,
+) -> dict:
+    """
+    Sube un video a YouTube usando la API oficial (YouTube Data API v3).
+    Si 'fecha_programada_iso_utc' está presente, se sube como privado y programado para publicarse en esa fecha/hora UTC.
+    """
+    if not ruta_video.exists():
+        raise FileNotFoundError(f"El video no existe: {ruta_video}")
+
+    youtube = obtener_servicio_youtube(ruta_secrets)
+
+    snippet = {
+        "title": titulo[:100],
+        "description": descripcion,
+        "tags": ["Shorts", "Roblox", "MrNubsito"],
+        "categoryId": "20",  # Videojuegos / Gaming
+    }
+
+    if fecha_programada_iso_utc:
+        status = {
+            "privacyStatus": "private",
+            "publishAt": fecha_programada_iso_utc,
+            "selfDeclaredMadeForKids": not no_es_para_ninos,
+        }
+    else:
+        status = {
+            "privacyStatus": "public",
+            "selfDeclaredMadeForKids": not no_es_para_ninos,
+        }
+
+    body = {
+        "snippet": snippet,
+        "status": status,
+    }
+
+    media = MediaFileUpload(
+        str(ruta_video),
+        chunksize=1024 * 1024 * 4,
+        resumable=True,
+        mimetype="video/mp4",
+    )
+
+    request = youtube.videos().insert(
+        part="snippet,status",
+        body=body,
+        media_body=media,
+    )
+
+    response = None
+    while response is None:
+        status_req, response = request.next_chunk()
+        if status_req:
+            pct = int(status_req.progress() * 100)
+            if callback_progreso:
+                callback_progreso(pct)
+
+    if callback_progreso:
+        callback_progreso(100)
+
+    return response
+
+
 def asegurar_acceso_directo_con_icono() -> None:
     """Crea o actualiza el acceso directo 'Mr Nubsito Studio.lnk' con el icono logo.ico en la carpeta."""
     if sys.platform != "win32":
@@ -3091,7 +3246,7 @@ def iniciar_aplicacion_gui() -> None:
     import queue
     import threading
     import tkinter as tk
-    from tkinter import messagebox, ttk
+    from tkinter import filedialog, messagebox, ttk
 
     root = tk.Tk()
     root.title("Mr Nubsito Studio")
@@ -3154,7 +3309,7 @@ def iniciar_aplicacion_gui() -> None:
                 pass
         root.after(10, _aplicar_barra_oscura)
 
-    # Estilo TTK para Scrollbars oscuras minimalistas (reemplaza las barras blancas antiguas de Windows)
+    # Estilo TTK para Scrollbars y Progressbars oscuras
     style = ttk.Style(root)
     try:
         style.theme_use("clam")
@@ -3176,6 +3331,17 @@ def iniciar_aplicacion_gui() -> None:
         "Studio.Vertical.TScrollbar",
         background=[("active", "#3b4254"), ("!disabled", "#262a36")],
     )
+    style.configure(
+        "Studio.Horizontal.TProgressbar",
+        troughcolor=BG_INPUT,
+        background=ACCENT_PRIMARY,
+        darkcolor=ACCENT_PRIMARY,
+        lightcolor=ACCENT_PRIMARY,
+        bordercolor=BORDER_INPUT,
+        thickness=6,
+    )
+
+    ultimo_video_exportado: List[Optional[Path]] = [None]
 
     cola_logs: "queue.Queue[str]" = queue.Queue()
     editando_lock = threading.Lock()
@@ -3578,6 +3744,432 @@ def iniciar_aplicacion_gui() -> None:
     )
     btn_pegar_guion.pack(side=tk.RIGHT)
 
+    def abrir_modal_subir_youtube(ruta_video_sugerida: Optional[Path] = None) -> None:
+        # Determinar video inicial
+        vid_target = ruta_video_sugerida or ultimo_video_exportado[0]
+        if not vid_target or not Path(vid_target).exists():
+            if OUTPUT_DIR.exists():
+                mp4s = sorted(OUTPUT_DIR.glob("*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
+                if mp4s:
+                    vid_target = mp4s[0]
+
+        # Determinar título inicial a partir del guión o del nombre del archivo
+        titulo_sugerido = ""
+        if DEFAULT_GUION_TXT.exists():
+            try:
+                for lin in DEFAULT_GUION_TXT.read_text(encoding="utf-8-sig").splitlines():
+                    if lin.strip().upper().startswith("TITULO_SUPERIOR:"):
+                        titulo_sugerido = lin.split(":", 1)[1].strip()
+                        break
+            except Exception:
+                pass
+        if not titulo_sugerido and vid_target:
+            titulo_sugerido = vid_target.stem.replace("editado_", "").replace("_", " ").title()
+
+        modal = tk.Toplevel(root)
+        modal.title("Publicar en YouTube Shorts")
+        modal.geometry("640x740")
+        modal.minsize(580, 680)
+        modal.configure(bg=BG_APP)
+        modal.transient(root)
+        modal.grab_set()
+
+        rx = root.winfo_x()
+        ry = root.winfo_y()
+        rw = root.winfo_width()
+        rh = root.winfo_height()
+        modal.geometry(f"+{max(30, rx + (rw - 640) // 2)}+{max(30, ry + (rh - 740) // 2)}")
+
+        if ruta_ico.exists():
+            try:
+                modal.iconbitmap(default=str(ruta_ico))
+            except Exception:
+                pass
+
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                hwnd_m = ctypes.windll.user32.GetParent(modal.winfo_id()) or modal.winfo_id()
+                val = ctypes.c_int(1)
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd_m, 20, ctypes.byref(val), ctypes.sizeof(val))
+            except Exception:
+                pass
+
+        # Encabezado del Modal
+        modal_header = tk.Frame(modal, bg=BG_HEADER, padx=20, pady=12)
+        modal_header.pack(fill=tk.X)
+        tk.Frame(modal, bg=BORDER_SUBTLE, height=1).pack(fill=tk.X)
+
+        tk.Label(
+            modal_header,
+            text="PUBLICAR EN YOUTUBE SHORTS",
+            font=("Segoe UI", 12, "bold"),
+            fg=FG_PRIMARY,
+            bg=BG_HEADER,
+        ).pack(side=tk.LEFT)
+
+        tk.Label(
+            modal_header,
+            text="YOUTUBE DATA API v3",
+            font=("Consolas", 8, "bold"),
+            fg="#ef4444",
+            bg="#261214",
+            padx=6,
+            pady=1,
+        ).pack(side=tk.RIGHT)
+
+        modal_body = tk.Frame(modal, bg=BG_APP, padx=20, pady=14)
+        modal_body.pack(fill=tk.BOTH, expand=True)
+
+        # 1. Campo de Video Seleccionado
+        card_vid = tk.Frame(modal_body, bg=BG_SURFACE, padx=14, pady=10, highlightthickness=1, highlightbackground=BORDER_SUBTLE)
+        card_vid.pack(fill=tk.X, pady=(0, 10))
+
+        tk.Label(card_vid, text="01. ARCHIVO DE VIDEO (.MP4)", font=("Segoe UI", 9, "bold"), fg=FG_MUTED, bg=BG_SURFACE).pack(anchor="w", pady=(0, 4))
+        row_vid = tk.Frame(card_vid, bg=BG_SURFACE)
+        row_vid.pack(fill=tk.X)
+
+        entry_vid_wrap = tk.Frame(row_vid, bg=BG_INPUT, highlightthickness=1, highlightbackground=BORDER_INPUT)
+        entry_vid_wrap.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
+
+        entry_vid = tk.Entry(entry_vid_wrap, font=("Consolas", 9), bg=BG_INPUT, fg=FG_PRIMARY, insertbackground=ACCENT_PRIMARY, relief=tk.FLAT, bd=0)
+        entry_vid.pack(fill=tk.X, padx=8, ipady=5)
+        if vid_target:
+            entry_vid.insert(0, str(vid_target))
+
+        def _seleccionar_video() -> None:
+            sel = filedialog.askopenfilename(
+                title="Seleccionar Video para Subir",
+                initialdir=str(OUTPUT_DIR if OUTPUT_DIR.exists() else BASE_DIR),
+                filetypes=[("Videos MP4", "*.mp4"), ("Todos los archivos", "*.*")],
+                parent=modal,
+            )
+            if sel:
+                entry_vid.delete(0, tk.END)
+                entry_vid.insert(0, sel)
+                if not entry_tit.get().strip():
+                    entry_tit.delete(0, tk.END)
+                    entry_tit.insert(0, Path(sel).stem.replace("editado_", "").replace("_", " ").title())
+
+        btn_examinar = crear_boton(row_vid, texto="Examinar...", comando=_seleccionar_video, font_spec=("Segoe UI", 9), padx=10, pady=4)
+        btn_examinar.pack(side=tk.RIGHT)
+
+        # 2. Campo de Título
+        card_tit = tk.Frame(modal_body, bg=BG_SURFACE, padx=14, pady=10, highlightthickness=1, highlightbackground=BORDER_SUBTLE)
+        card_tit.pack(fill=tk.X, pady=(0, 10))
+
+        row_tit_head = tk.Frame(card_tit, bg=BG_SURFACE)
+        row_tit_head.pack(fill=tk.X, pady=(0, 4))
+        tk.Label(row_tit_head, text="02. TÍTULO DEL VIDEO (YOUTUBE SHORTS)", font=("Segoe UI", 9, "bold"), fg=FG_MUTED, bg=BG_SURFACE).pack(side=tk.LEFT)
+        lbl_caracteres = tk.Label(row_tit_head, text=f"{len(titulo_sugerido)} / 100", font=("Consolas", 8), fg=FG_MUTED, bg=BG_SURFACE)
+        lbl_caracteres.pack(side=tk.RIGHT)
+
+        entry_tit_wrap = tk.Frame(card_tit, bg=BG_INPUT, highlightthickness=1, highlightbackground=BORDER_INPUT)
+        entry_tit_wrap.pack(fill=tk.X)
+        entry_tit = tk.Entry(entry_tit_wrap, font=("Segoe UI", 10, "bold"), bg=BG_INPUT, fg=FG_PRIMARY, insertbackground=ACCENT_PRIMARY, relief=tk.FLAT, bd=0)
+        entry_tit.pack(fill=tk.X, padx=8, ipady=6)
+        if titulo_sugerido:
+            entry_tit.insert(0, titulo_sugerido[:100])
+
+        def _actualizar_conteo(_e=None) -> None:
+            t = entry_tit.get()
+            lbl_caracteres.configure(text=f"{len(t)} / 100", fg=STATUS_RED if len(t) > 100 else FG_MUTED)
+
+        entry_tit.bind("<KeyRelease>", _actualizar_conteo)
+
+        # 3. Descripción y Etiquetas
+        card_desc = tk.Frame(modal_body, bg=BG_SURFACE, padx=14, pady=10, highlightthickness=1, highlightbackground=BORDER_SUBTLE)
+        card_desc.pack(fill=tk.X, pady=(0, 10))
+        tk.Label(card_desc, text="03. DESCRIPCIÓN Y HASHTAGS", font=("Segoe UI", 9, "bold"), fg=FG_MUTED, bg=BG_SURFACE).pack(anchor="w", pady=(0, 4))
+        entry_desc_wrap = tk.Frame(card_desc, bg=BG_INPUT, highlightthickness=1, highlightbackground=BORDER_INPUT)
+        entry_desc_wrap.pack(fill=tk.X)
+        entry_desc = tk.Entry(entry_desc_wrap, font=("Segoe UI", 9), bg=BG_INPUT, fg=FG_PRIMARY, insertbackground=ACCENT_PRIMARY, relief=tk.FLAT, bd=0)
+        entry_desc.pack(fill=tk.X, padx=8, ipady=5)
+        entry_desc.insert(0, "#Shorts #Roblox #MrNubsito")
+
+        # 4. Programación de Horario
+        card_prog = tk.Frame(modal_body, bg=BG_SURFACE, padx=14, pady=10, highlightthickness=1, highlightbackground=BORDER_SUBTLE)
+        card_prog.pack(fill=tk.X, pady=(0, 10))
+        tk.Label(card_prog, text="04. VISIBILIDAD Y PROGRAMACIÓN", font=("Segoe UI", 9, "bold"), fg=FG_MUTED, bg=BG_SURFACE).pack(anchor="w", pady=(0, 6))
+
+        var_programar = tk.BooleanVar(value=True)
+
+        row_radio = tk.Frame(card_prog, bg=BG_SURFACE)
+        row_radio.pack(fill=tk.X, pady=(0, 8))
+
+        def _cambio_modo_prog() -> None:
+            estado = tk.NORMAL if var_programar.get() else tk.DISABLED
+            entry_fec.configure(state=estado)
+            entry_hor.configure(state=estado)
+            if var_programar.get():
+                lbl_info_horario.configure(text="El video quedará programado para publicarse en la fecha y hora local indicadas.")
+            else:
+                lbl_info_horario.configure(text="El video se publicará inmediatamente como video Público.")
+
+        rb_prog = tk.Radiobutton(
+            row_radio,
+            text="Programar publicación para un horario",
+            variable=var_programar,
+            value=True,
+            command=_cambio_modo_prog,
+            bg=BG_SURFACE,
+            fg=FG_PRIMARY,
+            selectcolor=BG_INPUT,
+            activebackground=BG_SURFACE,
+            activeforeground=FG_PRIMARY,
+            font=("Segoe UI Semibold", 9),
+        )
+        rb_prog.pack(side=tk.LEFT, padx=(0, 16))
+
+        rb_inm = tk.Radiobutton(
+            row_radio,
+            text="Publicar inmediatamente (Público)",
+            variable=var_programar,
+            value=False,
+            command=_cambio_modo_prog,
+            bg=BG_SURFACE,
+            fg=FG_PRIMARY,
+            selectcolor=BG_INPUT,
+            activebackground=BG_SURFACE,
+            activeforeground=FG_PRIMARY,
+            font=("Segoe UI Semibold", 9),
+        )
+        rb_inm.pack(side=tk.LEFT)
+
+        row_dt = tk.Frame(card_prog, bg=BG_SURFACE)
+        row_dt.pack(fill=tk.X, pady=(0, 4))
+
+        tk.Label(row_dt, text="Fecha (AAAA-MM-DD):", font=("Segoe UI", 9), fg=FG_SECONDARY, bg=BG_SURFACE).pack(side=tk.LEFT, padx=(0, 6))
+        fec_def = (datetime.date.today() + datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+        fec_wrap = tk.Frame(row_dt, bg=BG_INPUT, highlightthickness=1, highlightbackground=BORDER_INPUT)
+        fec_wrap.pack(side=tk.LEFT, padx=(0, 16))
+        entry_fec = tk.Entry(fec_wrap, font=("Consolas", 10), bg=BG_INPUT, fg=FG_PRIMARY, insertbackground=ACCENT_PRIMARY, relief=tk.FLAT, bd=0, width=12)
+        entry_fec.pack(fill=tk.X, padx=6, ipady=4)
+        entry_fec.insert(0, fec_def)
+
+        tk.Label(row_dt, text="Hora (HH:MM):", font=("Segoe UI", 9), fg=FG_SECONDARY, bg=BG_SURFACE).pack(side=tk.LEFT, padx=(0, 6))
+        hor_wrap = tk.Frame(row_dt, bg=BG_INPUT, highlightthickness=1, highlightbackground=BORDER_INPUT)
+        hor_wrap.pack(side=tk.LEFT)
+        entry_hor = tk.Entry(hor_wrap, font=("Consolas", 10), bg=BG_INPUT, fg=FG_PRIMARY, insertbackground=ACCENT_PRIMARY, relief=tk.FLAT, bd=0, width=8)
+        entry_hor.pack(fill=tk.X, padx=6, ipady=4)
+        entry_hor.insert(0, "18:00")
+
+        lbl_info_horario = tk.Label(
+            card_prog,
+            text="El video quedará programado para publicarse en la fecha y hora local indicadas (conversión UTC automática).",
+            font=("Segoe UI", 8),
+            fg=FG_MUTED,
+            bg=BG_SURFACE,
+        )
+        lbl_info_horario.pack(anchor="w", pady=(4, 0))
+
+        # 5. Audiencia (No es contenido para niños - marcado por default)
+        card_aud = tk.Frame(modal_body, bg=BG_SURFACE, padx=14, pady=10, highlightthickness=1, highlightbackground=BORDER_SUBTLE)
+        card_aud.pack(fill=tk.X, pady=(0, 10))
+
+        var_no_ninos = tk.BooleanVar(value=True)  # MARCADA POR DEFAULT
+        cb_no_ninos = tk.Checkbutton(
+            card_aud,
+            text="No es contenido creado para niños",
+            variable=var_no_ninos,
+            bg=BG_SURFACE,
+            fg=FG_PRIMARY,
+            selectcolor=BG_INPUT,
+            activebackground=BG_SURFACE,
+            activeforeground=FG_PRIMARY,
+            font=("Segoe UI Semibold", 9),
+        )
+        cb_no_ninos.pack(anchor="w")
+
+        tk.Label(
+            card_aud,
+            text="Configura selfDeclaredMadeForKids=False ante YouTube (Recomendado para Gaming y Shorts).",
+            font=("Segoe UI", 8),
+            fg=FG_MUTED,
+            bg=BG_SURFACE,
+        ).pack(anchor="w", padx=(24, 0))
+
+        # 6. Estado de Credenciales Google
+        card_cred = tk.Frame(modal_body, bg=BG_SURFACE, padx=14, pady=8, highlightthickness=1, highlightbackground=BORDER_SUBTLE)
+        card_cred.pack(fill=tk.X, pady=(0, 10))
+
+        row_cred = tk.Frame(card_cred, bg=BG_SURFACE)
+        row_cred.pack(fill=tk.X)
+
+        ruta_secrets_elegida: List[Optional[Path]] = [buscar_archivo_client_secrets()]
+
+        lbl_cred_dot = tk.Label(row_cred, text="●", font=("Segoe UI", 9), fg=STATUS_GREEN if YOUTUBE_TOKEN_PATH.exists() else (STATUS_AMBER if ruta_secrets_elegida[0] else STATUS_RED), bg=BG_SURFACE)
+        lbl_cred_dot.pack(side=tk.LEFT, padx=(0, 6))
+
+        def _texto_cred() -> str:
+            if YOUTUBE_TOKEN_PATH.exists():
+                return "Sesión iniciada con éxito (youtube_token.json)"
+            elif ruta_secrets_elegida[0]:
+                return f"Credenciales listas para autenticar ({ruta_secrets_elegida[0].name})"
+            else:
+                return "Se requiere client_secrets.json de Google Cloud Console"
+
+        lbl_cred_txt = tk.Label(row_cred, text=_texto_cred(), font=("Segoe UI", 8), fg=FG_SECONDARY, bg=BG_SURFACE)
+        lbl_cred_txt.pack(side=tk.LEFT)
+
+        def _cargar_secrets_manual() -> None:
+            sel_s = filedialog.askopenfilename(
+                title="Seleccionar archivo client_secrets.json",
+                initialdir=str(BASE_DIR),
+                filetypes=[("Archivos JSON", "*.json"), ("Todos los archivos", "*.*")],
+                parent=modal,
+            )
+            if sel_s:
+                ruta_secrets_elegida[0] = Path(sel_s)
+                lbl_cred_dot.configure(fg=STATUS_AMBER)
+                lbl_cred_txt.configure(text=f"Credenciales cargadas ({Path(sel_s).name})")
+
+        btn_cargar_secrets = crear_boton(
+            row_cred,
+            texto="Cargar JSON...",
+            comando=_cargar_secrets_manual,
+            font_spec=("Segoe UI", 8),
+            padx=10,
+            pady=3,
+        )
+        btn_cargar_secrets.pack(side=tk.RIGHT)
+
+        # 7. Barra de Progreso y Acciones
+        prog_frame = tk.Frame(modal_body, bg=BG_APP)
+        prog_frame.pack(fill=tk.X, pady=(0, 8))
+
+        prog_bar = ttk.Progressbar(prog_frame, style="Studio.Horizontal.TProgressbar", orient="horizontal", mode="determinate")
+        prog_bar.pack(fill=tk.X, pady=(0, 4))
+
+        lbl_status_subida = tk.Label(prog_frame, text="Listo para publicar", font=("Segoe UI", 9), fg=FG_MUTED, bg=BG_APP)
+        lbl_status_subida.pack(anchor="w")
+
+        btn_row = tk.Frame(modal_body, bg=BG_APP)
+        btn_row.pack(fill=tk.X, pady=(4, 0))
+
+        def _ejecutar_subida() -> None:
+            vid_str = entry_vid.get().strip()
+            tit_str = entry_tit.get().strip()
+            desc_str = entry_desc.get().strip()
+            prog_act = var_programar.get()
+            no_ninos_act = var_no_ninos.get()
+
+            if not vid_str or not Path(vid_str).exists():
+                messagebox.showwarning("Video no encontrado", "Por favor selecciona un archivo de video .mp4 existente.", parent=modal)
+                return
+            if not tit_str:
+                messagebox.showwarning("Título requerido", "Por favor escribe un título para el video.", parent=modal)
+                return
+
+            fecha_iso_utc = None
+            if prog_act:
+                f_s = entry_fec.get().strip()
+                h_s = entry_hor.get().strip()
+                try:
+                    fecha_iso_utc = calcular_iso_programacion(f_s, h_s)
+                except Exception as ex_dt:
+                    messagebox.showerror("Fecha/Hora Inválida", f"Error en la programación:\n{ex_dt}", parent=modal)
+                    return
+
+            btn_subir_m.configure(state=tk.DISABLED, text="SUBIENDO A YOUTUBE...", bg="#262a34", fg=FG_SECONDARY)
+            lbl_status_subida.configure(text="Conectando con YouTube API y autenticando...", fg=ACCENT_PRIMARY)
+            prog_bar["value"] = 5
+
+            def _tarea():
+                try:
+                    def _cb_prog(pct: int):
+                        def _u():
+                            prog_bar["value"] = pct
+                            lbl_status_subida.configure(text=f"Subiendo a YouTube: {pct}%...", fg=ACCENT_PRIMARY)
+                        modal.after(0, _u)
+
+                    print("=" * 74)
+                    print(f"[*] Subiendo video a YouTube: '{tit_str}'")
+                    print(f"    Archivo: {vid_str}")
+                    print(f"    Modalidad: {'Programado para ' + fecha_iso_utc if fecha_iso_utc else 'Publicación Inmediata (Público)'}")
+                    print(f"    Audiencia: {'No es para niños (selfDeclaredMadeForKids=False)' if no_ninos_act else 'Para niños'}")
+                    print("=" * 74)
+
+                    resp = subir_video_a_youtube(
+                        ruta_video=Path(vid_str),
+                        titulo=tit_str,
+                        descripcion=desc_str,
+                        no_es_para_ninos=no_ninos_act,
+                        fecha_programada_iso_utc=fecha_iso_utc,
+                        ruta_secrets=ruta_secrets_elegida[0],
+                        callback_progreso=_cb_prog,
+                    )
+
+                    vid_id = resp.get("id", "")
+                    url_short = f"https://youtube.com/shorts/{vid_id}" if vid_id else "https://youtube.com"
+
+                    print("=" * 74)
+                    print(f"[EXITO] ¡Video subido con éxito a YouTube!")
+                    print(f"        ID del Video: {vid_id}")
+                    print(f"        Enlace: {url_short}")
+                    print("=" * 74)
+
+                    def _on_done():
+                        prog_bar["value"] = 100
+                        lbl_status_subida.configure(text=f"¡Subido con éxito! ID: {vid_id}", fg=STATUS_GREEN)
+                        btn_subir_m.configure(state=tk.NORMAL, text="SUBIR A YOUTUBE", bg=ACCENT_PRIMARY, fg="#090a0d")
+                        lbl_cred_dot.configure(fg=STATUS_GREEN)
+                        lbl_cred_txt.configure(text="Sesión iniciada con éxito (youtube_token.json)")
+
+                        detalles_info = f"Programado para: {entry_fec.get()} a las {entry_hor.get()} (hora local)" if prog_act else "Estado: Público"
+                        abrir = messagebox.askyesno(
+                            "¡Video Subido a YouTube!",
+                            f"El video se publicó con éxito en YouTube:\n\n"
+                            f"Título: {tit_str}\n"
+                            f"{detalles_info}\n"
+                            f"Audiencia: No para niños\n\n"
+                            f"Enlace: {url_short}\n\n"
+                            "¿Deseas abrir el video en tu navegador?",
+                            parent=modal,
+                        )
+                        if abrir:
+                            webbrowser.open(url_short)
+
+                    modal.after(0, _on_done)
+
+                except Exception as exc_subida:
+                    print(f"\n[ERROR YOUTUBE] {exc_subida}\n")
+                    def _on_error_subida(msg=str(exc_subida)):
+                        prog_bar["value"] = 0
+                        lbl_status_subida.configure(text=f"Error: {msg[:60]}...", fg=STATUS_RED)
+                        btn_subir_m.configure(state=tk.NORMAL, text="SUBIR A YOUTUBE", bg=ACCENT_PRIMARY, fg="#090a0d")
+                        messagebox.showerror("Error al subir a YouTube", msg, parent=modal)
+                    modal.after(0, _on_error_subida)
+
+            threading.Thread(target=_tarea, daemon=True).start()
+
+        btn_subir_m = crear_boton(
+            btn_row,
+            texto="SUBIR A YOUTUBE",
+            comando=_ejecutar_subida,
+            bg_normal=ACCENT_PRIMARY,
+            bg_hover=ACCENT_PRIMARY_HOVER,
+            fg_normal="#090a0d",
+            font_spec=("Segoe UI", 10, "bold"),
+            borde="#ca8a04",
+            padx=20,
+            pady=8,
+        )
+        btn_subir_m.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
+
+        btn_cerrar = crear_boton(
+            btn_row,
+            texto="Cerrar",
+            comando=modal.destroy,
+            bg_normal=BG_BTN_SEC,
+            bg_hover=BG_BTN_SEC_HOVER,
+            fg_normal=FG_PRIMARY,
+            font_spec=("Segoe UI Semibold", 9),
+            padx=16,
+            pady=8,
+        )
+        btn_cerrar.pack(side=tk.RIGHT)
+
     # =========================================================================
     # SECCIÓN 03: BARRA DE ACCIONES PRINCIPALES
     # =========================================================================
@@ -3597,6 +4189,20 @@ def iniciar_aplicacion_gui() -> None:
         pady=10,
     )
     btn_editar.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
+
+    btn_subir_yt = crear_boton(
+        acciones_frame,
+        texto="Subir a YouTube",
+        comando=lambda: abrir_modal_subir_youtube(),
+        bg_normal="#991b1b",
+        bg_hover="#b91c1c",
+        fg_normal="#ffffff",
+        font_spec=("Segoe UI Semibold", 10),
+        borde="#7f1d1d",
+        padx=18,
+        pady=10,
+    )
+    btn_subir_yt.pack(side=tk.RIGHT, padx=(8, 0))
 
     def abrir_carpeta_salida() -> None:
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -3742,13 +4348,17 @@ def iniciar_aplicacion_gui() -> None:
                 ruta_final = asyncio.run(editar_video_con_guion(ruta_video_usar, DEFAULT_GUION_TXT))
 
                 def on_success() -> None:
+                    ultimo_video_exportado[0] = ruta_final
                     set_estado_ui(f"Exportado: {ruta_final.name}", STATUS_GREEN, STATUS_GREEN)
                     btn_editar._bg_base = ACCENT_PRIMARY  # type: ignore[attr-defined]
                     btn_editar.configure(state=tk.NORMAL, text="RENDERIZAR VIDEO", bg=ACCENT_PRIMARY, fg="#090a0d")
-                    messagebox.showinfo(
+                    resp = messagebox.askyesno(
                         "¡Video Terminado!",
-                        f"El video se generó con éxito en:\n\n{ruta_final}",
+                        f"El video se generó con éxito en:\n\n{ruta_final.name}\n\n¿Deseas subirlo o programarlo en YouTube ahora?",
+                        icon="question"
                     )
+                    if resp:
+                        abrir_modal_subir_youtube(ruta_final)
 
                 root.after(0, on_success)
 

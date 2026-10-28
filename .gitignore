@@ -12,3 +12,7 @@ video_input.*
 
 # Local Windows shortcut
 *.lnk
+
+# YouTube OAuth credentials & tokens (private)
+youtube_token.json
+client_secrets*.json
