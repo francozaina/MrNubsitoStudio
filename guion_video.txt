@@ -1,11 +1,12 @@
-TITULO_SUPERIOR: Lo Que Ven Tus Padres Vs Tu
+TITULO_SUPERIOR: Cheetos 2000 Vs 2026 Vs 2050
 MODO_PANTALLA: split
 VOLUMEN_VIDEO_ORIGINAL: 0.22
 ARCHIVO_SALIDA: auto
 
 [GUION]
 TIEMPO | GESTO | SFX | EMOJI | FLECHA | LIKE_SUB | TIMER | TEXTO
-00:00 - 00:04 | hablando  | boxing_bell+whoosh      | fiesta:derecha        | ninguna       | no | no | ¡Mamá me empuja por la escalera en una caja, pero yo bajo esquiando la montaña!
-00:04 - 00:08 | hablando2 | riser_suction+shock     | sorprendido:izquierda | 33,35@00:07.0 | no | no | ¡Ella ve un simple ventilador prendido, mientras yo resisto un tornado gigante que vuela vacas!
-00:08 - 00:12 | hablando  | whoosh+crowd_shocked    | diablo:derecha        | ninguna       | no | no | ¡Cuando juego con la manguera del jardín, en mi mente soy un bombero apagando incendios!
-00:12 - 00:16 | hablando2 | cartoon_laugh+kids_yeyy | risa:izquierda        | ninguna       | no | no | ¡Y en el caballito de resorte de la plaza siento que galopo a máxima velocidad!
+00:00 - 00:06 | hablando  | boxing_bell+kids_yeyy   | fiesta:derecha        | ninguna       | no | no | ¡En el año dos mil las bolsas de Cheetos venían tan llenas que formaban una montaña gigante sobre toda la mesa!
+00:06 - 00:11 | hablando2 | whoosh+error            | sorprendido:izquierda | 50,42@00:10.0 | no | no | ¡Pero hoy en el dos mil veintiséis abres el paquete y la mitad de la bolsa trae puro aire adentro!
+00:11 - 00:16 | hablando  | awww+cartoon_laugh      | enojo:derecha         | ninguna       | no | no | ¡El pobre queda súper decepcionado mirando hacia abajo y mastica con mucha bronca los poquitos que le tocaron!
+00:16 - 00:20 | hablando2 | riser_suction+shock     | diablo:izquierda      | ninguna       | no | no | ¡Y prepárate para la estafa del año dos mil cincuenta cuando intente volcar el paquete sobre la mesa!
+00:20 - 00:24 | hablando  | xp_Error+fart           | lloro:derecha         | ninguna       | no | no | ¡Aunque sacude la bolsa dada vuelta no cae absolutamente nada porque viene totalmente vacía!

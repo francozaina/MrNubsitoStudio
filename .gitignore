@@ -9,3 +9,6 @@ __pycache__/
 # Input testing files (optional/local)
 video_input.mp4
 video_input.*
+
+# Local Windows shortcut
+*.lnk

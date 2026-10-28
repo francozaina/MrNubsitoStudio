@@ -3037,17 +3037,52 @@ def descargar_video_youtube(url: str) -> Path:
     raise FileNotFoundError("No se encontró el archivo 'video_input.mp4' tras la descarga.")
 
 
+def asegurar_acceso_directo_con_icono() -> None:
+    """Crea o actualiza el acceso directo 'Mr Nubsito Studio.lnk' con el icono logo.ico en la carpeta."""
+    if sys.platform != "win32":
+        return
+    lnk_path = BASE_DIR / "Mr Nubsito Studio.lnk"
+    ico_path = BASE_DIR / "logo.ico"
+    py_path = BASE_DIR / "Mr Nubsito Studio.py"
+    if not ico_path.exists() or not py_path.exists():
+        return
+    try:
+        import shutil
+        pyw_exe = shutil.which("pythonw") or shutil.which("python") or sys.executable
+        ps_cmd = (
+            f"$ws = New-Object -ComObject WScript.Shell; "
+            f"$s = $ws.CreateShortcut('{str(lnk_path)}'); "
+            f"$s.TargetPath = '{str(pyw_exe)}'; "
+            f"$s.Arguments = '\"{str(py_path)}\"'; "
+            f"$s.WorkingDirectory = '{str(BASE_DIR)}'; "
+            f"$s.IconLocation = '{str(ico_path)},0'; "
+            f"$s.Description = 'Mr Nubsito Studio - Editor de Shorts'; "
+            f"$s.Save()"
+        )
+        subprocess.run(
+            ["powershell", "-NoProfile", "-Command", ps_cmd],
+            capture_output=True,
+            creationflags=SUBPROCESS_NO_WINDOW,
+            check=False,
+        )
+    except Exception:
+        pass
+
+
 def iniciar_aplicacion_gui() -> None:
-    # Si se ejecutó desde una consola en Windows, ocultar la ventana negra de fondo
-    # para que la experiencia sea 100% limpia sin ventanas residuales.
+    # 1. Configurar AppUserModelID para que Windows muestre logo.ico en la barra de tareas en lugar del de Python
     if sys.platform == "win32":
         try:
             import ctypes
+            myappid = "mrnubsito.studio.editor.v4"
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
             hwnd = ctypes.windll.kernel32.GetConsoleWindow()
             if hwnd:
                 ctypes.windll.user32.ShowWindow(hwnd, 0)  # 0 = SW_HIDE
         except Exception:
             pass
+
+    asegurar_acceso_directo_con_icono()
 
     import queue
     import threading
@@ -3059,6 +3094,23 @@ def iniciar_aplicacion_gui() -> None:
     root.geometry("920x760")
     root.minsize(780, 640)
     root.configure(bg="#14161f")
+
+    # 2. Cargar logo.ico en la barra de título de la ventana y en la barra de tareas
+    ruta_ico = BASE_DIR / "logo.ico"
+    if ruta_ico.exists():
+        try:
+            root.iconbitmap(default=str(ruta_ico))
+        except Exception:
+            try:
+                root.iconbitmap(str(ruta_ico))
+            except Exception:
+                pass
+        try:
+            from PIL import ImageTk
+            img_ico = Image.open(str(ruta_ico))
+            root.tk.call("wm", "iconphoto", root._w, ImageTk.PhotoImage(img_ico))
+        except Exception:
+            pass
 
     cola_logs: "queue.Queue[str]" = queue.Queue()
     editando_lock = threading.Lock()
