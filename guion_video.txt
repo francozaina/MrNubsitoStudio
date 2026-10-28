@@ -1,11 +1,11 @@
-TITULO_SUPERIOR: Normal Vs Millonario En Roblox
+TITULO_SUPERIOR: Lo Que Ven Tus Padres Vs Tu
 MODO_PANTALLA: split
 VOLUMEN_VIDEO_ORIGINAL: 0.22
 ARCHIVO_SALIDA: auto
 
 [GUION]
 TIEMPO | GESTO | SFX | EMOJI | FLECHA | LIKE_SUB | TIMER | TEXTO
-00:00 - 00:04 | hablando  | boxing_bell+cash_ting | sorprendido:derecha   | ninguna       | no | no | ¡Si se cae el celular la gente normal lo levanta, pero el rico saca uno nuevo!
-00:04 - 00:08 | hablando2 | whoosh+punch          | diablo:izquierda      | ninguna       | no | no | ¡Uno exprime toda la pasta dental haciendo fuerza y el millonario tira el tubo casi lleno!
-00:08 - 00:12 | hablando  | awww+cartoon_laugh    | risa:derecha          | 48,28@00:11.1 | no | no | ¡Mientras nosotros chupamos la tapa del yogur, el rico solo come eso y tira el bote!
-00:12 - 00:16 | hablando2 | shock+party_horn      | fiesta:izquierda      | ninguna       | no | no | ¡Y en vez de sufrir con un ventilador viejo, él se abanica con fajos de billetes!
+00:00 - 00:04 | hablando  | boxing_bell+whoosh      | fiesta:derecha        | ninguna       | no | no | ¡Mamá me empuja por la escalera en una caja, pero yo bajo esquiando la montaña!
+00:04 - 00:08 | hablando2 | riser_suction+shock     | sorprendido:izquierda | 33,35@00:07.0 | no | no | ¡Ella ve un simple ventilador prendido, mientras yo resisto un tornado gigante que vuela vacas!
+00:08 - 00:12 | hablando  | whoosh+crowd_shocked    | diablo:derecha        | ninguna       | no | no | ¡Cuando juego con la manguera del jardín, en mi mente soy un bombero apagando incendios!
+00:12 - 00:16 | hablando2 | cartoon_laugh+kids_yeyy | risa:izquierda        | ninguna       | no | no | ¡Y en el caballito de resorte de la plaza siento que galopo a máxima velocidad!

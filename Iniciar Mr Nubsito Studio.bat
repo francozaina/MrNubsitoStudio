@@ -1,4 +1,9 @@
 @echo off
 cd /d "%~dp0"
-python "Mr Nubsito Studio.py"
-if errorlevel 1 pause
+where pythonw >nul 2>nul
+if %errorlevel% equ 0 (
+    start "" pythonw "Mr Nubsito Studio.py"
+) else (
+    start "" python "Mr Nubsito Studio.py"
+)
+exit

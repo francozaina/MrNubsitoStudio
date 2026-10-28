@@ -31,6 +31,11 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+# Bandera de Windows para evitar que se abran ventanas de terminal negras al invocar FFmpeg, yt-dlp, etc.
+SUBPROCESS_NO_WINDOW = (
+    subprocess.CREATE_NO_WINDOW if sys.platform == "win32" and hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+)
+
 try:
     import edge_tts
     HAS_EDGE_TTS = True
@@ -1161,6 +1166,7 @@ def masterizar_voz_estudio_ffmpeg(
         ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        creationflags=SUBPROCESS_NO_WINDOW,
         check=False,
     )
     if res.returncode != 0 or not ruta_wav_salida.exists():
@@ -1168,6 +1174,7 @@ def masterizar_voz_estudio_ffmpeg(
             ["ffmpeg", "-y", "-i", str(ruta_entrada), "-ar", "44100", "-ac", "1", str(ruta_wav_salida)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            creationflags=SUBPROCESS_NO_WINDOW,
             check=False,
         )
 
@@ -1284,6 +1291,7 @@ async def generar_voz_y_timestamps_segmento(
                         ["ffmpeg", "-y", "-i", str(tmp_mp3), "-ar", str(sr), "-ac", "1", str(tmp_wav)],
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
+                        creationflags=SUBPROCESS_NO_WINDOW,
                         check=False,
                     )
                 if tmp_wav.exists() and tmp_wav.stat().st_size > 0:
@@ -1669,6 +1677,7 @@ class GestorAssetsVisuales:
             res = subprocess.run(
                 ["ffmpeg", "-i", str(like_sub_path), "-f", "s16le", "-ac", "1", "-ar", "44100", "-"],
                 capture_output=True,
+                creationflags=SUBPROCESS_NO_WINDOW,
                 check=False,
             )
             if res.returncode == 0 and len(res.stdout) > 0:
@@ -1738,6 +1747,7 @@ class GestorAssetsVisuales:
             res = subprocess.run(
                 ["ffmpeg", "-i", str(timer_path), "-f", "s16le", "-ac", "1", "-ar", "44100", "-"],
                 capture_output=True,
+                creationflags=SUBPROCESS_NO_WINDOW,
                 check=False,
             )
             if res.returncode == 0 and len(res.stdout) > 0:
@@ -1985,7 +1995,12 @@ class LectorVideoReferencia:
             "-",
         ]
         try:
-            proc = subprocess.Popen(cmd_ff, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            proc = subprocess.Popen(
+                cmd_ff,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                creationflags=SUBPROCESS_NO_WINDOW,
+            )
             bytes_por_frame = target_w * target_h * 3
             if proc.stdout:
                 while True:
@@ -2487,6 +2502,7 @@ class GestorAudioSFX:
                         "-",
                     ],
                     capture_output=True,
+                    creationflags=SUBPROCESS_NO_WINDOW,
                     check=False,
                 )
                 if res.returncode != 0 or not res.stdout:
@@ -2610,7 +2626,13 @@ def mezclar_voz_sfx_y_likesub(
 
 def detectar_encoder_nvidia() -> str:
     try:
-        res = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True, check=False)
+        res = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-encoders"],
+            capture_output=True,
+            text=True,
+            creationflags=SUBPROCESS_NO_WINDOW,
+            check=False,
+        )
         if "h264_nvenc" in res.stdout:
             return "h264_nvenc"
     except FileNotFoundError:
@@ -2791,6 +2813,7 @@ async def editar_video_con_guion(ruta_video: Path, ruta_guion: Path) -> Path:
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            creationflags=SUBPROCESS_NO_WINDOW,
             check=False,
         )
         if res_mix.returncode != 0 or not ruta_audio_final.exists():
@@ -2832,7 +2855,12 @@ async def editar_video_con_guion(ruta_video: Path, ruta_guion: Path) -> Path:
         str(ruta_mp4_final),
     ]
 
-    proceso_ffmpeg = subprocess.Popen(cmd_ffmpeg, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    proceso_ffmpeg = subprocess.Popen(
+        cmd_ffmpeg,
+        stdin=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        creationflags=SUBPROCESS_NO_WINDOW,
+    )
 
     tiempo_global = 0.0
 
@@ -2987,6 +3015,7 @@ def descargar_video_youtube(url: str) -> Path:
         text=True,
         encoding="utf-8",
         errors="replace",
+        creationflags=SUBPROCESS_NO_WINDOW,
     )
     if proc.stdout:
         for linea in proc.stdout:
@@ -3009,13 +3038,24 @@ def descargar_video_youtube(url: str) -> Path:
 
 
 def iniciar_aplicacion_gui() -> None:
+    # Si se ejecutó desde una consola en Windows, ocultar la ventana negra de fondo
+    # para que la experiencia sea 100% limpia sin ventanas residuales.
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+            if hwnd:
+                ctypes.windll.user32.ShowWindow(hwnd, 0)  # 0 = SW_HIDE
+        except Exception:
+            pass
+
     import queue
     import threading
     import tkinter as tk
     from tkinter import messagebox, scrolledtext
 
     root = tk.Tk()
-    root.title("Mr Nubsito Studio v4.0 - Editor Automático de Shorts")
+    root.title("Mr Nubsito Studio v4.3 - Editor Automático de Shorts")
     root.geometry("920x760")
     root.minsize(780, 640)
     root.configure(bg="#14161f")
