@@ -1,11 +1,10 @@
-TITULO_SUPERIOR: Con Mama Vs Con Papa
+TITULO_SUPERIOR: Por Que Llegue Tarde Hoy
 MODO_PANTALLA: split
 VOLUMEN_VIDEO_ORIGINAL: 0.22
 ARCHIVO_SALIDA: auto
 
 [GUION]
 TIEMPO | GESTO | SFX | EMOJI | FLECHA | LIKE_SUB | TIMER | TEXTO
-00:00 - 00:04 | hablando  | boxing_bell+punch     | sorprendido:derecha   | ninguna        | no | no | ¡Mamá me enseña a andar en bici con cuidado pero papá me empuja directo al suelo!
-00:04 - 00:07 | hablando2 | awww+cartoon_laugh    | risa:izquierda        | ninguna        | no | no | ¡Para dormir mamá me abraza tiernamente pero papá me aplasta con su pie la cara!
-00:07 - 00:11 | hablando  | whoosh+shock          | diablo:derecha        | 78,42@00:10.0  | no | no | ¡En la plaza mamá me hamaca despacito pero papá me hace dar vueltas por el aire!
-00:11 - 00:16 | hablando2 | pop+crowd_shocked     | fiesta:izquierda      | ninguna        | no | no | ¡Y en la playa mamá arma un castillito simple pero papá construye una fortaleza gigante increíble!
+00:00 - 00:04 | hablando  | whoosh+punch         | sorprendido:derecha   | 42,75@00:01.0 | no | no | ¡Esta es la increíble razón por la que llegué tarde hoy al pisar esa pelota y caer!
+00:04 - 00:08 | hablando2 | pop+good_idea        | risa:izquierda        | ninguna       | no | no | ¡La pelota rebota dejando la frazada encima para taparme y prende el ventilador muy fresco!
+00:08 - 00:13 | hablando  | click+cartoon_laugh  | sueno:derecha         | ninguna       | no | no | ¡Para colmo golpea la tecla apagando la luz del cuarto y así quedé profundamente dormido otra vez!

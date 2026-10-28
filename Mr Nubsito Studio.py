@@ -3141,10 +3141,22 @@ def subir_video_a_youtube(
 
     youtube = obtener_servicio_youtube(ruta_secrets)
 
+    # Garantizar #Shorts en el título y descripción (requerido por YouTube para indexarlo como Short vertical)
+    tit_final = titulo.strip()
+    if "#shorts" not in tit_final.lower():
+        if len(tit_final) + len(" #Shorts") <= 100:
+            tit_final = f"{tit_final} #Shorts"
+        else:
+            tit_final = f"{tit_final[:91].rstrip()} #Shorts"
+
+    desc_final = descripcion.strip()
+    if "#shorts" not in desc_final.lower():
+        desc_final = f"{desc_final}\n\n#Shorts #Roblox" if desc_final else "#Shorts #Roblox"
+
     snippet = {
-        "title": titulo[:100],
-        "description": descripcion,
-        "tags": ["Shorts", "Roblox", "MrNubsito"],
+        "title": tit_final[:100],
+        "description": desc_final,
+        "tags": ["Shorts", "#Shorts", "YouTube Shorts", "Roblox", "MrNubsito", "shorts", "short"],
         "categoryId": "20",  # Videojuegos / Gaming
     }
 
@@ -3766,10 +3778,17 @@ def iniciar_aplicacion_gui() -> None:
         if not titulo_sugerido and vid_target:
             titulo_sugerido = vid_target.stem.replace("editado_", "").replace("_", " ").title()
 
+        if titulo_sugerido:
+            if "#shorts" not in titulo_sugerido.lower():
+                if len(titulo_sugerido) + len(" #Shorts") <= 100:
+                    titulo_sugerido = f"{titulo_sugerido} #Shorts"
+                else:
+                    titulo_sugerido = f"{titulo_sugerido[:91].rstrip()} #Shorts"
+
         modal = tk.Toplevel(root)
         modal.title("Publicar en YouTube Shorts")
-        modal.geometry("640x740")
-        modal.minsize(580, 680)
+        modal.geometry("640x760")
+        modal.minsize(580, 700)
         modal.configure(bg=BG_APP)
         modal.transient(root)
         modal.grab_set()
@@ -3848,13 +3867,15 @@ def iniciar_aplicacion_gui() -> None:
                 entry_vid.delete(0, tk.END)
                 entry_vid.insert(0, sel)
                 if not entry_tit.get().strip():
+                    nombre_base = Path(sel).stem.replace("editado_", "").replace("_", " ").title()
                     entry_tit.delete(0, tk.END)
-                    entry_tit.insert(0, Path(sel).stem.replace("editado_", "").replace("_", " ").title())
+                    entry_tit.insert(0, f"{nombre_base} #Shorts"[:100])
+                    _actualizar_conteo()
 
         btn_examinar = crear_boton(row_vid, texto="Examinar...", comando=_seleccionar_video, font_spec=("Segoe UI", 9), padx=10, pady=4)
         btn_examinar.pack(side=tk.RIGHT)
 
-        # 2. Campo de Título
+        # 2. Campo de Título con Selector de Emojis
         card_tit = tk.Frame(modal_body, bg=BG_SURFACE, padx=14, pady=10, highlightthickness=1, highlightbackground=BORDER_SUBTLE)
         card_tit.pack(fill=tk.X, pady=(0, 10))
 
@@ -3864,8 +3885,11 @@ def iniciar_aplicacion_gui() -> None:
         lbl_caracteres = tk.Label(row_tit_head, text=f"{len(titulo_sugerido)} / 100", font=("Consolas", 8), fg=FG_MUTED, bg=BG_SURFACE)
         lbl_caracteres.pack(side=tk.RIGHT)
 
-        entry_tit_wrap = tk.Frame(card_tit, bg=BG_INPUT, highlightthickness=1, highlightbackground=BORDER_INPUT)
-        entry_tit_wrap.pack(fill=tk.X)
+        row_tit_input = tk.Frame(card_tit, bg=BG_SURFACE)
+        row_tit_input.pack(fill=tk.X)
+
+        entry_tit_wrap = tk.Frame(row_tit_input, bg=BG_INPUT, highlightthickness=1, highlightbackground=BORDER_INPUT)
+        entry_tit_wrap.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
         entry_tit = tk.Entry(entry_tit_wrap, font=("Segoe UI", 10, "bold"), bg=BG_INPUT, fg=FG_PRIMARY, insertbackground=ACCENT_PRIMARY, relief=tk.FLAT, bd=0)
         entry_tit.pack(fill=tk.X, padx=8, ipady=6)
         if titulo_sugerido:
@@ -3876,6 +3900,226 @@ def iniciar_aplicacion_gui() -> None:
             lbl_caracteres.configure(text=f"{len(t)} / 100", fg=STATUS_RED if len(t) > 100 else FG_MUTED)
 
         entry_tit.bind("<KeyRelease>", _actualizar_conteo)
+
+        # Selector de Emojis flotante
+        win_emoji_ref: List[Optional[tk.Toplevel]] = [None]
+
+        def _abrir_selector_emojis() -> None:
+            if win_emoji_ref[0] is not None and win_emoji_ref[0].winfo_exists():
+                win_emoji_ref[0].lift()
+                win_emoji_ref[0].focus_force()
+                return
+
+            win_e = tk.Toplevel(modal)
+            win_emoji_ref[0] = win_e
+            win_e.title("Selector de Emojis")
+            win_e.geometry("380x420")
+            win_e.minsize(340, 380)
+            win_e.configure(bg=BG_APP)
+            win_e.transient(modal)
+
+            try:
+                bx = btn_emojis.winfo_rootx()
+                by = btn_emojis.winfo_rooty()
+                win_e.geometry(f"+{max(20, bx - 260)}+{by + 36}")
+            except Exception:
+                pass
+
+            if ruta_ico.exists():
+                try:
+                    win_e.iconbitmap(default=str(ruta_ico))
+                except Exception:
+                    pass
+
+            hdr_e = tk.Frame(win_e, bg=BG_HEADER, padx=12, pady=8)
+            hdr_e.pack(fill=tk.X)
+            tk.Label(hdr_e, text="SELECTOR DE EMOJIS", font=("Segoe UI", 10, "bold"), fg=ACCENT_PRIMARY, bg=BG_HEADER).pack(side=tk.LEFT)
+            tk.Button(
+                hdr_e,
+                text="✕",
+                font=("Segoe UI", 9, "bold"),
+                fg=FG_MUTED,
+                bg=BG_HEADER,
+                activebackground=BG_HEADER,
+                activeforeground=FG_PRIMARY,
+                relief=tk.FLAT,
+                bd=0,
+                cursor="hand2",
+                command=win_e.destroy,
+            ).pack(side=tk.RIGHT)
+            tk.Frame(win_e, bg=BORDER_SUBTLE, height=1).pack(fill=tk.X)
+
+            categorias = {
+                "🔥 Viral": [
+                    "🔥", "💀", "😂", "😱", "🤯", "😭", "🤡", "🤫", "😈", "😎",
+                    "⚡", "💥", "🏆", "💎", "👑", "🚨", "⚠️", "❗", "❓", "👀",
+                    "💯", "🤑", "🥳", "🧐", "🤐", "🥶", "🥵", "🥱"
+                ],
+                "😀 Caras": [
+                    "😀", "😃", "😄", "😁", "😆", "😅", "🤣", "😂", "🙂", "😉",
+                    "😊", "😇", "🥰", "😍", "🤩", "😘", "😋", "😜", "🤪", "😝",
+                    "🤗", "🤭", "🤫", "🤔", "🤐", "🤨", "😐", "😑", "😶", "😏",
+                    "😒", "🙄", "😬", "🤥", "😌", "😔", "😪", "🤤", "😴", "😷"
+                ],
+                "🎮 Gaming": [
+                    "🎮", "🕹️", "👾", "🏆", "🥇", "🥈", "🥉", "⚔️", "🛡️", "💣",
+                    "🧨", "🚀", "🛸", "💎", "🪙", "👑", "📦", "🚪", "🏃", "🧗",
+                    "🛹", "🏎️", "🏹", "🗡️", "🔫", "🦾", "🎪", "🎭", "🎬", "🎤"
+                ],
+                "✨ Símbolos": [
+                    "✨", "💥", "⚡", "💯", "🚨", "⚠️", "🛑", "⛔", "❗", "❓",
+                    "‼️", "⁉️", "➡️", "⬅️", "⬆️", "⬇️", "🔄", "🔁", "🔴", "🟢",
+                    "🔵", "🟡", "🟣", "⚫", "⚪", "🔔", "🔕", "📢", "📣", "💬"
+                ],
+                "👋 Manos": [
+                    "👍", "👎", "👊", "✊", "🤛", "🤜", "👏", "🙌", "👐", "🤲",
+                    "🤝", "✌️", "🤞", "🤟", "🤘", "🤙", "👈", "👉", "👆", "👇",
+                    "☝️", "✋", "🤚", "🖐️", "🖖", "👋", "🧠", "👁️", "👄", "💪"
+                ],
+            }
+
+            def _insertar_emoji(emo: str) -> None:
+                try:
+                    pos = entry_tit.index(tk.INSERT)
+                    entry_tit.insert(pos, emo)
+                    entry_tit.focus_set()
+                    entry_tit.icursor(pos + len(emo))
+                except Exception:
+                    entry_tit.insert(tk.END, emo)
+                _actualizar_conteo()
+
+            tabs_frame = tk.Frame(win_e, bg=BG_SURFACE, padx=6, pady=6)
+            tabs_frame.pack(fill=tk.X)
+
+            grid_container = tk.Frame(win_e, bg=BG_APP, padx=8, pady=8)
+            grid_container.pack(fill=tk.BOTH, expand=True)
+
+            current_tab_btns: List[Tuple[tk.Button, str]] = []
+
+            def _mostrar_categoria(nombre_cat: str) -> None:
+                for widget in grid_container.winfo_children():
+                    widget.destroy()
+
+                for b, name in current_tab_btns:
+                    if name == nombre_cat:
+                        b.configure(bg=ACCENT_PRIMARY, fg="#090a0d")
+                    else:
+                        b.configure(bg=BG_SURFACE_ELEVATED, fg=FG_PRIMARY)
+
+                lista_emojis = categorias[nombre_cat]
+                cols = 7
+                for idx, em in enumerate(lista_emojis):
+                    r = idx // cols
+                    c = idx % cols
+                    btn_em = tk.Button(
+                        grid_container,
+                        text=em,
+                        font=("Segoe UI Emoji", 13),
+                        bg=BG_SURFACE,
+                        fg=FG_PRIMARY,
+                        activebackground=ACCENT_PRIMARY,
+                        activeforeground="#090a0d",
+                        relief=tk.FLAT,
+                        bd=0,
+                        cursor="hand2",
+                        width=3,
+                        height=1,
+                        command=lambda ch=em: _insertar_emoji(ch),
+                    )
+                    btn_em.grid(row=r, column=c, padx=2, pady=2, sticky="nsew")
+
+                for col_i in range(cols):
+                    grid_container.grid_columnconfigure(col_i, weight=1)
+
+            for cat_name in categorias.keys():
+                btn_cat = tk.Button(
+                    tabs_frame,
+                    text=cat_name,
+                    font=("Segoe UI", 8, "bold"),
+                    bg=BG_SURFACE_ELEVATED,
+                    fg=FG_PRIMARY,
+                    relief=tk.FLAT,
+                    bd=0,
+                    padx=6,
+                    pady=3,
+                    cursor="hand2",
+                    command=lambda n=cat_name: _mostrar_categoria(n),
+                )
+                btn_cat.pack(side=tk.LEFT, padx=2)
+                current_tab_btns.append((btn_cat, cat_name))
+
+            _mostrar_categoria("🔥 Viral")
+
+            footer_e = tk.Frame(win_e, bg=BG_SURFACE, padx=10, pady=8)
+            footer_e.pack(fill=tk.X, side=tk.BOTTOM)
+            tk.Frame(win_e, bg=BORDER_SUBTLE, height=1).pack(fill=tk.X, side=tk.BOTTOM)
+
+            def _abrir_windows_emoji():
+                try:
+                    import ctypes
+                    entry_tit.focus_set()
+                    ctypes.windll.user32.keybd_event(0x5B, 0, 0, 0)
+                    ctypes.windll.user32.keybd_event(0xBE, 0, 0, 0)
+                    ctypes.windll.user32.keybd_event(0xBE, 0, 2, 0)
+                    ctypes.windll.user32.keybd_event(0x5B, 0, 2, 0)
+                except Exception:
+                    pass
+
+            btn_win_emo = tk.Button(
+                footer_e,
+                text="⌨️ Más emojis (Win + .)",
+                font=("Segoe UI", 8),
+                bg=BG_SURFACE_ELEVATED,
+                fg=FG_SECONDARY,
+                activebackground=BORDER_INPUT,
+                activeforeground=FG_PRIMARY,
+                relief=tk.FLAT,
+                bd=0,
+                padx=8,
+                pady=4,
+                cursor="hand2",
+                command=_abrir_windows_emoji,
+            )
+            btn_win_emo.pack(side=tk.LEFT)
+
+            btn_cerrar = tk.Button(
+                footer_e,
+                text="Listo",
+                font=("Segoe UI", 8, "bold"),
+                bg=ACCENT_PRIMARY,
+                fg="#090a0d",
+                activebackground=ACCENT_HOVER,
+                activeforeground="#090a0d",
+                relief=tk.FLAT,
+                bd=0,
+                padx=12,
+                pady=4,
+                cursor="hand2",
+                command=win_e.destroy,
+            )
+            btn_cerrar.pack(side=tk.RIGHT)
+
+        btn_emojis = crear_boton(
+            row_tit_input,
+            texto="😀 Emojis",
+            comando=_abrir_selector_emojis,
+            font_spec=("Segoe UI", 9, "bold"),
+            bg_normal=BG_SURFACE_ELEVATED,
+            bg_hover="#2c3342",
+            fg_color=FG_PRIMARY,
+            padx=10,
+            pady=5,
+        )
+        btn_emojis.pack(side=tk.RIGHT)
+
+        lbl_hint_shorts = tk.Label(
+            card_tit,
+            text="⚡ Se incluirá #Shorts en el título para que YouTube lo clasifique en el feed vertical de Shorts.",
+            font=("Segoe UI", 8),
+            fg="#eab308",
+            bg=BG_SURFACE,
+        )
+        lbl_hint_shorts.pack(anchor="w", pady=(4, 0))
 
         # 3. Descripción y Etiquetas
         card_desc = tk.Frame(modal_body, bg=BG_SURFACE, padx=14, pady=10, highlightthickness=1, highlightbackground=BORDER_SUBTLE)
@@ -4061,6 +4305,22 @@ def iniciar_aplicacion_gui() -> None:
                 messagebox.showwarning("Título requerido", "Por favor escribe un título para el video.", parent=modal)
                 return
 
+            # Asegurar #Shorts en el título para que YouTube lo procese e indexe como Short vertical
+            if "#shorts" not in tit_str.lower():
+                if len(tit_str) + len(" #Shorts") <= 100:
+                    tit_str = f"{tit_str} #Shorts"
+                else:
+                    tit_str = f"{tit_str[:91].rstrip()} #Shorts"
+                entry_tit.delete(0, tk.END)
+                entry_tit.insert(0, tit_str)
+                _actualizar_conteo()
+
+            # Asegurar #Shorts en la descripción
+            if "#shorts" not in desc_str.lower():
+                desc_str = f"{desc_str}\n\n#Shorts #Roblox" if desc_str else "#Shorts #Roblox"
+                entry_desc.delete(0, tk.END)
+                entry_desc.insert(0, desc_str)
+
             fecha_iso_utc = None
             if prog_act:
                 f_s = entry_fec.get().strip()
@@ -4118,13 +4378,13 @@ def iniciar_aplicacion_gui() -> None:
 
                         detalles_info = f"Programado para: {entry_fec.get()} a las {entry_hor.get()} (hora local)" if prog_act else "Estado: Público"
                         abrir = messagebox.askyesno(
-                            "¡Video Subido a YouTube!",
-                            f"El video se publicó con éxito en YouTube:\n\n"
+                            "¡Short Subido a YouTube!",
+                            f"El video se publicó con éxito como YouTube Short:\n\n"
                             f"Título: {tit_str}\n"
                             f"{detalles_info}\n"
                             f"Audiencia: No para niños\n\n"
-                            f"Enlace: {url_short}\n\n"
-                            "¿Deseas abrir el video en tu navegador?",
+                            f"Enlace Short: {url_short}\n\n"
+                            "¿Deseas abrir el Short en tu navegador?",
                             parent=modal,
                         )
                         if abrir:
